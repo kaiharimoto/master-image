@@ -1081,6 +1081,8 @@ public static class ImageLoader
     {
         try
         {
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
@@ -1088,7 +1090,7 @@ public static class ImageLoader
             {
                 bitmap.DecodePixelWidth = decodePixelWidth;
             }
-            bitmap.UriSource = new Uri(filePath);
+            bitmap.StreamSource = stream;
             bitmap.EndInit();
             bitmap.Freeze();
             return bitmap;
@@ -1102,6 +1104,10 @@ public static class ImageLoader
             return null;
         }
         catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
         {
             return null;
         }
@@ -1119,7 +1125,7 @@ public static class ImageLoader
 }
 ```
 
-`CacheOption = BitmapCacheOption.OnLoad` forces WPF to fully read and decode the file during `EndInit()` and release the file handle — without it, `BitmapImage` can keep the source file locked, which would make it impossible to move/delete photos while the app has them open.
+**Fixed during implementation** (originally this used `bitmap.UriSource = new Uri(filePath)` instead of an explicit `FileStream` + `StreamSource`): the implementer correctly caught that `UriSource`-based loading only releases its file handle deterministically on a *successful* decode. On a failed decode (unsupported format), `BitmapImage`/`BitmapDecoder` don't implement `IDisposable`, so the handle lingers until the next GC — not just a test-cleanup annoyance, but a real risk for the actual app: `PhotoSet.Load` filters by extension only, so a corrupted file or an unsupported format (e.g. `.webp` without the codec installed) that gets scanned and thumbnailed would leave a lingering open handle, and doing this across many files during an `L` full-folder preload could accumulate a pile of leaked handles before GC ever runs. Opening the file explicitly via `FileStream` (with `FileShare.Read`, since other processes/the OS shell may want to read it concurrently) and wrapping it in `using` guarantees the handle closes deterministically the moment `TryLoad` returns — on success *or* failure — which is exactly the documented WPF pattern for this ("with `CacheOption.OnLoad` and a stream source, the stream can be closed immediately after `EndInit()` returns"). Also added a `catch (UnauthorizedAccessException)` alongside the others, consistent with the same exception-class gap found and fixed in Task 6's `CullOperations` — a permission-denied or externally-locked file throws this instead of `IOException`.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
