@@ -21,7 +21,7 @@ public static class PhotoSet
         files.Sort(new NaturalSortComparer());
 
         return files
-            .Select(path => new PhotoItem(Path.GetFileNameWithoutExtension(path), new List<string> { path }))
+            .Select(path => new PhotoItem(Path.GetFileNameWithoutExtension(path), new[] { path }))
             .ToList();
     }
 }
