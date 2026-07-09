@@ -31,10 +31,17 @@ public sealed class ThumbnailManifest
             return new ThumbnailManifest(new Dictionary<string, ThumbnailManifestEntry>());
         }
 
-        string json = File.ReadAllText(manifestPath);
-        var entries = JsonSerializer.Deserialize<Dictionary<string, ThumbnailManifestEntry>>(json)
-            ?? new Dictionary<string, ThumbnailManifestEntry>();
-        return new ThumbnailManifest(entries);
+        try
+        {
+            string json = File.ReadAllText(manifestPath);
+            var entries = JsonSerializer.Deserialize<Dictionary<string, ThumbnailManifestEntry>>(json)
+                ?? new Dictionary<string, ThumbnailManifestEntry>();
+            return new ThumbnailManifest(entries);
+        }
+        catch (JsonException)
+        {
+            return new ThumbnailManifest(new Dictionary<string, ThumbnailManifestEntry>());
+        }
     }
 
     public void Save(string manifestPath)
@@ -76,11 +83,14 @@ public sealed class ThumbnailManifest
         };
     }
 
-    public void PruneMissing(IReadOnlySet<string> existingSourceFileNames)
+    public IReadOnlyList<string> PruneMissing(IReadOnlySet<string> existingSourceFileNames)
     {
+        var removedThumbnailFileNames = new List<string>();
         foreach (var key in _entries.Keys.Where(k => !existingSourceFileNames.Contains(k)).ToList())
         {
+            removedThumbnailFileNames.Add(_entries[key].ThumbnailFileName);
             _entries.Remove(key);
         }
+        return removedThumbnailFileNames;
     }
 }

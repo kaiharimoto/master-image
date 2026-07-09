@@ -72,7 +72,7 @@ public class ThumbnailManifestTests : IDisposable
     }
 
     [Fact]
-    public void PruneMissingRemovesEntriesNotInExistingSet()
+    public void PruneMissingRemovesEntriesNotInExistingSetAndReturnsTheirThumbnailFileNames()
     {
         string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
         File.WriteAllBytes(sourcePath, new byte[] { 1 });
@@ -80,7 +80,35 @@ public class ThumbnailManifestTests : IDisposable
         var manifest = ThumbnailManifest.LoadOrCreate(_manifestPath);
         manifest.Update(sourcePath, "DSC1.jpg", "abc123.jpg");
 
-        manifest.PruneMissing(new HashSet<string>());
+        var removed = manifest.PruneMissing(new HashSet<string>());
+
+        Assert.False(manifest.IsUpToDate(sourcePath, "DSC1.jpg"));
+        Assert.Equal(new[] { "abc123.jpg" }, removed);
+    }
+
+    [Fact]
+    public void PruneMissingKeepsEntriesStillInExistingSet()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        File.WriteAllBytes(sourcePath, new byte[] { 1 });
+
+        var manifest = ThumbnailManifest.LoadOrCreate(_manifestPath);
+        manifest.Update(sourcePath, "DSC1.jpg", "abc123.jpg");
+
+        var removed = manifest.PruneMissing(new HashSet<string> { "DSC1.jpg" });
+
+        Assert.Empty(removed);
+        Assert.True(manifest.IsUpToDate(sourcePath, "DSC1.jpg"));
+    }
+
+    [Fact]
+    public void LoadOrCreateRecoversFromCorruptManifestFile()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        File.WriteAllBytes(sourcePath, new byte[] { 1 });
+        File.WriteAllText(_manifestPath, "{ not valid json !!! ");
+
+        var manifest = ThumbnailManifest.LoadOrCreate(_manifestPath);
 
         Assert.False(manifest.IsUpToDate(sourcePath, "DSC1.jpg"));
     }
