@@ -49,4 +49,14 @@ public class MarksStoreTests : IDisposable
         Assert.True(reloaded.IsMarked("DSC5"));
         Assert.False(reloaded.IsMarked("DSC2"));
     }
+
+    [Fact]
+    public void LoadOrCreateRecoversFromCorruptMarksFile()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "marks.json"), "{ not valid json !!! ");
+
+        var store = MarksStore.LoadOrCreate(_tempDir);
+
+        Assert.False(store.IsMarked("DSC1"));
+    }
 }
