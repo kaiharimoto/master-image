@@ -855,8 +855,31 @@ public class CullOperationsTests : IDisposable
         Assert.Single(result.Failures);
         Assert.True(File.Exists(sourcePath));
     }
+
+    [Fact]
+    public void PartialPairFailureMovesOneFileAndReportsTheOtherAsAFailure()
+    {
+        string rawPath = Path.Combine(_tempDir, "DSC1.NEF");
+        string jpgPath = Path.Combine(_tempDir, "DSC1.JPG");
+        File.WriteAllBytes(rawPath, new byte[] { 1 });
+        File.WriteAllBytes(jpgPath, new byte[] { 2 });
+        Directory.CreateDirectory(Path.Combine(_tempDir, "selected"));
+        File.WriteAllBytes(Path.Combine(_tempDir, "selected", "DSC1.JPG"), new byte[] { 9 });
+
+        var marked = new[] { new PhotoItem("DSC1", new[] { rawPath, jpgPath }) };
+
+        var result = CullOperations.MoveMarkedToSelectedFolder(_tempDir, marked);
+
+        Assert.Equal(1, result.MovedFileCount);
+        Assert.Single(result.Failures);
+        Assert.True(File.Exists(Path.Combine(_tempDir, "selected", "DSC1.NEF")));
+        Assert.False(File.Exists(rawPath));
+        Assert.True(File.Exists(jpgPath));
+    }
 }
 ```
+
+The last test documents accepted (not prevented) behavior: if one file of a RAW+JPEG pair can't move, the pair can end up split across two folders. `CullOperations` reports this via `Failures` rather than silently losing track of it or throwing, but nothing re-pairs them — a photographer would need to notice the failure and finish the move manually.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -901,6 +924,10 @@ public static class CullOperations
                 {
                     failures.Add($"{filePath} ({ex.Message})");
                 }
+                catch (UnauthorizedAccessException ex)
+                {
+                    failures.Add($"{filePath} ({ex.Message})");
+                }
             }
         }
 
@@ -909,10 +936,12 @@ public static class CullOperations
 }
 ```
 
+`UnauthorizedAccessException` (thrown for a read-only or externally-locked file, e.g. permission-denied rather than a sharing violation) doesn't derive from `IOException`, so it needs its own `catch` — without it, one locked file aborts the entire batch move uncaught instead of degrading to a `Failures` entry like every other failure mode here.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter CullOperationsTests`
-Expected: `Passed! - Failed: 0, Passed: 3`
+Expected: `Passed! - Failed: 0, Passed: 4`
 
 - [ ] **Step 5: Commit**
 
