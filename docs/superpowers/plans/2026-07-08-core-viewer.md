@@ -987,6 +987,27 @@ public static class TestImageFactory
         using var stream = File.Create(path);
         encoder.Save(stream);
     }
+
+    public static void WriteTestJpegWithOrientation(string path, int width, int height, ushort exifOrientation)
+    {
+        var pixels = new byte[width * height * 3];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (byte)(i % 256);
+        }
+
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Rgb24, null, pixels, width * 3);
+
+        var metadata = new BitmapMetadata("jpg");
+        metadata.SetQuery("System.Photo.Orientation", exifOrientation);
+
+        var encoder = new JpegBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap, thumbnail: null, metadata: metadata, colorContexts: null));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
 }
 ```
 
@@ -1049,6 +1070,45 @@ public class ImageLoaderTests : IDisposable
         var reloaded = ImageLoader.TryLoadAtSize(destPath, decodePixelWidth: 100);
         Assert.NotNull(reloaded);
     }
+
+    [Fact]
+    public void Rotates90DegreeExifOrientationAndSwapsDimensions()
+    {
+        string path = Path.Combine(_tempDir, "rotated90.jpg");
+        TestImageFactory.WriteTestJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 6);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(60, result!.PixelWidth);
+        Assert.Equal(100, result.PixelHeight);
+    }
+
+    [Fact]
+    public void Rotates180DegreeExifOrientationWithoutSwappingDimensions()
+    {
+        string path = Path.Combine(_tempDir, "rotated180.jpg");
+        TestImageFactory.WriteTestJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 3);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(100, result!.PixelWidth);
+        Assert.Equal(60, result.PixelHeight);
+    }
+
+    [Fact]
+    public void NormalOrientationIsNotRotated()
+    {
+        string path = Path.Combine(_tempDir, "normal.jpg");
+        TestImageFactory.WriteTestJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 1);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(100, result!.PixelWidth);
+        Assert.Equal(60, result.PixelHeight);
+    }
 }
 ```
 
@@ -1061,6 +1121,7 @@ Expected: FAIL to compile — `ImageLoader` does not exist.
 
 ```csharp
 // src/MasterImage.Core/ImageLoader.cs
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace MasterImage.Core;
@@ -1092,8 +1153,10 @@ public static class ImageLoader
             }
             bitmap.StreamSource = stream;
             bitmap.EndInit();
-            bitmap.Freeze();
-            return bitmap;
+
+            BitmapSource result = ApplyExifOrientation(bitmap);
+            result.Freeze();
+            return result;
         }
         catch (NotSupportedException)
         {
@@ -1113,6 +1176,45 @@ public static class ImageLoader
         }
     }
 
+    // Cameras only ever produce EXIF orientation 1 (normal), 3 (180deg), 6 (90deg CW), or
+    // 8 (270deg CW / 90deg CCW) - the mirror-flip variants (2, 4, 5, 7) come only from certain
+    // scanning/editing tools and are deliberately left un-rotated (angle 0) here as out of scope.
+    private static BitmapSource ApplyExifOrientation(BitmapImage bitmap)
+    {
+        if (bitmap.Metadata is not BitmapMetadata metadata)
+        {
+            return bitmap;
+        }
+
+        ushort orientation = 1;
+        try
+        {
+            if (metadata.GetQuery("System.Photo.Orientation") is { } value)
+            {
+                orientation = Convert.ToUInt16(value);
+            }
+        }
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or InvalidCastException)
+        {
+            // Format doesn't carry this metadata (e.g. PNG/BMP/GIF) - no rotation needed.
+        }
+
+        double angle = orientation switch
+        {
+            3 => 180,
+            6 => 90,
+            8 => 270,
+            _ => 0,
+        };
+
+        if (angle == 0)
+        {
+            return bitmap;
+        }
+
+        return new TransformedBitmap(bitmap, new RotateTransform(angle));
+    }
+
     public static void SaveAsJpeg(BitmapSource source, string destinationPath, int quality = 85)
     {
         var encoder = new JpegBitmapEncoder { QualityLevel = quality };
@@ -1125,12 +1227,14 @@ public static class ImageLoader
 }
 ```
 
+Note: for a 90deg/270deg rotation, the final `PixelWidth`/`PixelHeight` will be swapped relative to `decodePixelWidth` (which constrains the pre-rotation decode) — e.g. requesting `decodePixelWidth: 400` on a portrait phone photo stored as landscape pixels + orientation 6 yields a final bitmap that's 400 tall, not 400 wide. This is fine for every consumer in this plan (WPF `Image` controls use `Stretch="Uniform"`, which fits either dimension), but worth knowing if a future caller ever treats `decodePixelWidth` as an exact width contract rather than a size hint.
+
 **Fixed during implementation** (originally this used `bitmap.UriSource = new Uri(filePath)` instead of an explicit `FileStream` + `StreamSource`): the implementer correctly caught that `UriSource`-based loading only releases its file handle deterministically on a *successful* decode. On a failed decode (unsupported format), `BitmapImage`/`BitmapDecoder` don't implement `IDisposable`, so the handle lingers until the next GC — not just a test-cleanup annoyance, but a real risk for the actual app: `PhotoSet.Load` filters by extension only, so a corrupted file or an unsupported format (e.g. `.webp` without the codec installed) that gets scanned and thumbnailed would leave a lingering open handle, and doing this across many files during an `L` full-folder preload could accumulate a pile of leaked handles before GC ever runs. Opening the file explicitly via `FileStream` (with `FileShare.Read`, since other processes/the OS shell may want to read it concurrently) and wrapping it in `using` guarantees the handle closes deterministically the moment `TryLoad` returns — on success *or* failure — which is exactly the documented WPF pattern for this ("with `CacheOption.OnLoad` and a stream source, the stream can be closed immediately after `EndInit()` returns"). Also added a `catch (UnauthorizedAccessException)` alongside the others, consistent with the same exception-class gap found and fixed in Task 6's `CullOperations` — a permission-denied or externally-locked file throws this instead of `IOException`.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter ImageLoaderTests`
-Expected: `Passed! - Failed: 0, Passed: 3`
+Expected: `Passed! - Failed: 0, Passed: 6`
 
 - [ ] **Step 6: Commit**
 
