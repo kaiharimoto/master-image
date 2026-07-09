@@ -10,9 +10,10 @@
 
 **Known caveat carried into this plan:** WIC's built-in codecs cover JPEG/PNG/GIF/BMP/TIFF natively on any Windows install. `.webp` decoding depends on the "WebP Image Extensions" package from the Microsoft Store being installed — if it's missing, `BitmapDecoder` throws and this plan's `ImageLoader` catches that and treats the file as undecodable (shown as a broken-image placeholder) rather than crashing. Nothing to install to build/run this plan; it only affects whether actual `.webp` files preview correctly on a given machine.
 
-**Two behaviors resolved here (not explicit in the spec) — flagging for visibility:**
+**Three behaviors resolved here (not explicit in the spec) — flagging for visibility:**
 - Left/Right seeking **wraps around** at the folder's ends (pressing Right on the last photo goes to the first, and vice versa) rather than stopping.
 - After `N` moves marked photos to `selected/`, the in-memory photo list is reloaded from disk and the current index is clamped back into range if it moved past the new end.
+- Marks are keyed by full filename (with extension), not by `PhotoItem.Stem` — found during Task 3's code review: `PhotoSet.Load` (Phase 1) emits one `PhotoItem` per file, so two files sharing a stem across different extensions (e.g. `sunset.jpg` and `sunset.png`) would otherwise collide on a bare-stem mark key and incorrectly share mark state. See `MarkKey` in Task 10.
 
 ---
 
@@ -1538,9 +1539,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public IReadOnlyList<PhotoItem> Photos => _photos;
     public int CurrentIndex => _currentIndex;
     public PhotoItem? CurrentPhoto => _photos.Count > 0 ? _photos[_currentIndex] : null;
-    public bool IsCurrentMarked => CurrentPhoto is not null && _marksStore.IsMarked(CurrentPhoto.Stem);
+    public bool IsCurrentMarked => CurrentPhoto is not null && _marksStore.IsMarked(MarkKey(CurrentPhoto));
 
-    public bool IsMarked(PhotoItem item) => _marksStore.IsMarked(item.Stem);
+    public bool IsMarked(PhotoItem item) => _marksStore.IsMarked(MarkKey(item));
+
+    // Keyed by full filename (with extension), not Stem: PhotoSet.Load currently emits
+    // one PhotoItem per file, so two files that happen to share a stem across different
+    // extensions (e.g. sunset.jpg and sunset.png) would collide on a bare-Stem key and
+    // incorrectly share mark state. Filename-with-extension is unique per PhotoItem today,
+    // and stays unique once RAW+JPEG pairing groups files under one PhotoItem (Plan 2) since
+    // there's still exactly one PrimaryFilePath per PhotoItem.
+    private static string MarkKey(PhotoItem item) => Path.GetFileName(item.PrimaryFilePath);
 
     public bool IsGridVisible
     {
@@ -1587,19 +1596,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void ToggleMark()
     {
         if (CurrentPhoto is null) return;
-        _marksStore.Toggle(CurrentPhoto.Stem);
+        _marksStore.Toggle(MarkKey(CurrentPhoto));
         _marksStore.Save();
         OnPropertyChanged(nameof(IsCurrentMarked));
     }
 
     public CullOperations.MoveResult MoveMarkedToSelected()
     {
-        var marked = _photos.Where(p => _marksStore.IsMarked(p.Stem)).ToList();
+        var marked = _photos.Where(p => _marksStore.IsMarked(MarkKey(p))).ToList();
         var result = CullOperations.MoveMarkedToSelectedFolder(FolderPath, marked);
 
         foreach (var item in marked)
         {
-            _marksStore.Toggle(item.Stem);
+            _marksStore.Toggle(MarkKey(item));
         }
         _marksStore.Save();
 
