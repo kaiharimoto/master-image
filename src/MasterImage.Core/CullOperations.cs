@@ -34,6 +34,10 @@ public static class CullOperations
                 {
                     failures.Add($"{filePath} ({ex.Message})");
                 }
+                catch (UnauthorizedAccessException ex)
+                {
+                    failures.Add($"{filePath} ({ex.Message})");
+                }
             }
         }
 

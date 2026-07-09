@@ -74,4 +74,25 @@ public class CullOperationsTests : IDisposable
         Assert.Single(result.Failures);
         Assert.True(File.Exists(sourcePath));
     }
+
+    [Fact]
+    public void PartialPairFailureMovesOneFileAndReportsTheOtherAsAFailure()
+    {
+        string rawPath = Path.Combine(_tempDir, "DSC1.NEF");
+        string jpgPath = Path.Combine(_tempDir, "DSC1.JPG");
+        File.WriteAllBytes(rawPath, new byte[] { 1 });
+        File.WriteAllBytes(jpgPath, new byte[] { 2 });
+        Directory.CreateDirectory(Path.Combine(_tempDir, "selected"));
+        File.WriteAllBytes(Path.Combine(_tempDir, "selected", "DSC1.JPG"), new byte[] { 9 });
+
+        var marked = new[] { new PhotoItem("DSC1", new[] { rawPath, jpgPath }) };
+
+        var result = CullOperations.MoveMarkedToSelectedFolder(_tempDir, marked);
+
+        Assert.Equal(1, result.MovedFileCount);
+        Assert.Single(result.Failures);
+        Assert.True(File.Exists(Path.Combine(_tempDir, "selected", "DSC1.NEF")));
+        Assert.False(File.Exists(rawPath));
+        Assert.True(File.Exists(jpgPath));
+    }
 }
