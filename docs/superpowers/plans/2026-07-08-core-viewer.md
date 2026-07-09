@@ -445,7 +445,7 @@ public class ThumbnailManifestTests : IDisposable
     }
 
     [Fact]
-    public void PruneMissingRemovesEntriesNotInExistingSet()
+    public void PruneMissingRemovesEntriesNotInExistingSetAndReturnsTheirThumbnailFileNames()
     {
         string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
         File.WriteAllBytes(sourcePath, new byte[] { 1 });
@@ -453,7 +453,35 @@ public class ThumbnailManifestTests : IDisposable
         var manifest = ThumbnailManifest.LoadOrCreate(_manifestPath);
         manifest.Update(sourcePath, "DSC1.jpg", "abc123.jpg");
 
-        manifest.PruneMissing(new HashSet<string>());
+        var removed = manifest.PruneMissing(new HashSet<string>());
+
+        Assert.False(manifest.IsUpToDate(sourcePath, "DSC1.jpg"));
+        Assert.Equal(new[] { "abc123.jpg" }, removed);
+    }
+
+    [Fact]
+    public void PruneMissingKeepsEntriesStillInExistingSet()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        File.WriteAllBytes(sourcePath, new byte[] { 1 });
+
+        var manifest = ThumbnailManifest.LoadOrCreate(_manifestPath);
+        manifest.Update(sourcePath, "DSC1.jpg", "abc123.jpg");
+
+        var removed = manifest.PruneMissing(new HashSet<string> { "DSC1.jpg" });
+
+        Assert.Empty(removed);
+        Assert.True(manifest.IsUpToDate(sourcePath, "DSC1.jpg"));
+    }
+
+    [Fact]
+    public void LoadOrCreateRecoversFromCorruptManifestFile()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        File.WriteAllBytes(sourcePath, new byte[] { 1 });
+        File.WriteAllText(_manifestPath, "{ not valid json !!! ");
+
+        var manifest = ThumbnailManifest.LoadOrCreate(_manifestPath);
 
         Assert.False(manifest.IsUpToDate(sourcePath, "DSC1.jpg"));
     }
@@ -498,10 +526,19 @@ public sealed class ThumbnailManifest
             return new ThumbnailManifest(new Dictionary<string, ThumbnailManifestEntry>());
         }
 
-        string json = File.ReadAllText(manifestPath);
-        var entries = JsonSerializer.Deserialize<Dictionary<string, ThumbnailManifestEntry>>(json)
-            ?? new Dictionary<string, ThumbnailManifestEntry>();
-        return new ThumbnailManifest(entries);
+        try
+        {
+            string json = File.ReadAllText(manifestPath);
+            var entries = JsonSerializer.Deserialize<Dictionary<string, ThumbnailManifestEntry>>(json)
+                ?? new Dictionary<string, ThumbnailManifestEntry>();
+            return new ThumbnailManifest(entries);
+        }
+        catch (JsonException)
+        {
+            // A crash or power loss mid-write can leave manifest.json truncated/corrupt.
+            // Treat it the same as "missing" rather than taking down the whole cache permanently.
+            return new ThumbnailManifest(new Dictionary<string, ThumbnailManifestEntry>());
+        }
     }
 
     public void Save(string manifestPath)
@@ -543,20 +580,25 @@ public sealed class ThumbnailManifest
         };
     }
 
-    public void PruneMissing(IReadOnlySet<string> existingSourceFileNames)
+    public IReadOnlyList<string> PruneMissing(IReadOnlySet<string> existingSourceFileNames)
     {
+        var removedThumbnailFileNames = new List<string>();
         foreach (var key in _entries.Keys.Where(k => !existingSourceFileNames.Contains(k)).ToList())
         {
+            removedThumbnailFileNames.Add(_entries[key].ThumbnailFileName);
             _entries.Remove(key);
         }
+        return removedThumbnailFileNames;
     }
 }
 ```
 
+`PruneMissing` returns the `ThumbnailFileName`s it just orphaned (rather than `void`) so `ThumbnailCache.PruneOrphans` (Task 8) can actually delete those cached `.jpg` files from disk — without this, every cull (`N` key, Task 6) would leave its thumbnail behind in `.thumbnails/` forever, a real disk leak in an app whose core workflow is repeatedly removing photos from watched folders. `LoadOrCreate` catching `JsonException` means a crash mid-write (non-atomic `Save`) degrades to "act like the cache is empty and rebuild it" instead of permanently breaking that folder's cache on every future launch.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter ThumbnailManifestTests`
-Expected: `Passed! - Failed: 0, Passed: 5`
+Expected: `Passed! - Failed: 0, Passed: 7`
 
 - [ ] **Step 5: Commit**
 
@@ -1189,8 +1231,17 @@ public sealed class ThumbnailCache
     public void PruneOrphans(IReadOnlyList<PhotoItem> currentItems)
     {
         var existingNames = currentItems.Select(i => Path.GetFileName(i.PrimaryFilePath)).ToHashSet();
-        _manifest.PruneMissing(existingNames);
+        var orphanedThumbnailFileNames = _manifest.PruneMissing(existingNames);
         _manifest.Save(_manifestPath);
+
+        foreach (var thumbnailFileName in orphanedThumbnailFileNames)
+        {
+            string orphanPath = Path.Combine(ThumbnailsFolder, thumbnailFileName);
+            if (File.Exists(orphanPath))
+            {
+                File.Delete(orphanPath);
+            }
+        }
     }
 }
 ```
