@@ -53,4 +53,43 @@ public class ImageLoaderTests : IDisposable
         var reloaded = ImageLoader.TryLoadAtSize(destPath, decodePixelWidth: 100);
         Assert.NotNull(reloaded);
     }
+
+    [Fact]
+    public void Rotates90DegreeExifOrientationAndSwapsDimensions()
+    {
+        string path = Path.Combine(_tempDir, "rotated90.jpg");
+        TestImageFactory.WriteTestJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 6);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(60, result!.PixelWidth);
+        Assert.Equal(100, result.PixelHeight);
+    }
+
+    [Fact]
+    public void Rotates180DegreeExifOrientationWithoutSwappingDimensions()
+    {
+        string path = Path.Combine(_tempDir, "rotated180.jpg");
+        TestImageFactory.WriteTestJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 3);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(100, result!.PixelWidth);
+        Assert.Equal(60, result.PixelHeight);
+    }
+
+    [Fact]
+    public void NormalOrientationIsNotRotated()
+    {
+        string path = Path.Combine(_tempDir, "normal.jpg");
+        TestImageFactory.WriteTestJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 1);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(100, result!.PixelWidth);
+        Assert.Equal(60, result.PixelHeight);
+    }
 }
