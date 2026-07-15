@@ -476,6 +476,67 @@ public partial class MainWindow : Window
         return bounds is { Width: > 0, Height: > 0 };
     }
 
+    // A borderless window maximises over the *whole* monitor, not the work area — so the taskbar,
+    // which is always-on-top, ends up drawn across the bottom of our content (it was covering the
+    // filename/position overlay in the corner). Constrain maximise to the work area so it behaves
+    // like a normal maximised window. Fullscreen is unaffected: it sets explicit bounds on a
+    // Normal-state window rather than maximising, and is the one mode that *should* cover the taskbar.
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            source.AddHook(WindowProc);
+        }
+    }
+
+    private IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WmGetMinMaxInfo = 0x0024;
+
+        if (msg == WmGetMinMaxInfo && TryConstrainMaximiseToWorkArea(hwnd, lParam))
+        {
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private static bool TryConstrainMaximiseToWorkArea(IntPtr hwnd, IntPtr lParam)
+    {
+        IntPtr monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info))
+        {
+            return false;
+        }
+
+        var minMax = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+        NativeRect work = info.rcWork;
+        NativeRect screen = info.rcMonitor;
+
+        // Positions here are relative to the monitor's top-left, not the desktop's.
+        minMax.ptMaxPosition.X = work.Left - screen.Left;
+        minMax.ptMaxPosition.Y = work.Top - screen.Top;
+        minMax.ptMaxSize.X = work.Right - work.Left;
+        minMax.ptMaxSize.Y = work.Bottom - work.Top;
+
+        // ...but still allow a *non*-maximised window to reach the monitor's full size, which is
+        // exactly what fullscreen asks for. Without this the tracking limit would clamp it back to
+        // the work area and the taskbar would reappear.
+        minMax.ptMaxTrackSize.X = screen.Right - screen.Left;
+        minMax.ptMaxTrackSize.Y = screen.Bottom - screen.Top;
+
+        Marshal.StructureToPtr(minMax, lParam, fDeleteOld: true);
+        return true;
+    }
+
     private const uint MonitorDefaultToNearest = 2;
 
     [DllImport("user32.dll")]
@@ -501,5 +562,22 @@ public partial class MainWindow : Window
         public NativeRect rcMonitor; // whole monitor, taskbar included
         public NativeRect rcWork;    // work area, taskbar excluded
         public uint dwFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public NativePoint ptReserved;
+        public NativePoint ptMaxSize;
+        public NativePoint ptMaxPosition;
+        public NativePoint ptMinTrackSize;
+        public NativePoint ptMaxTrackSize;
     }
 }

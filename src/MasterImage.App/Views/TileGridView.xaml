@@ -2,7 +2,11 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:core="clr-namespace:MasterImage.Core;assembly=MasterImage.Core"
+             xmlns:views="clr-namespace:MasterImage.App.Views"
              xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel">
+    <UserControl.Resources>
+        <views:TileSizeToItemSizeConverter x:Key="TileToItemSize" />
+    </UserControl.Resources>
     <Border Background="#111111">
         <ListBox x:Name="TileList"
                  Background="Transparent"
@@ -13,7 +17,15 @@
                  SelectionMode="Single">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <vwp:VirtualizingWrapPanel Orientation="Horizontal" />
+                    <!-- ItemSize must track TileSize too: the panel measures its cell size once
+                         from the first item and caches it, so without this the tiles' Border would
+                         resize inside cells that never changed. 8 = the tile's 4px margin, doubled. -->
+                    <vwp:VirtualizingWrapPanel
+                        Orientation="Horizontal"
+                        ItemSize="{Binding DataContext.TileSize,
+                                           RelativeSource={RelativeSource AncestorType=UserControl},
+                                           Converter={StaticResource TileToItemSize},
+                                           ConverterParameter=8}" />
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
