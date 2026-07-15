@@ -17,6 +17,9 @@ public partial class MainWindow : Window
     private const int ReadAheadForward = 20;
     private const int ReadAheadBackward = 8;
 
+    // How much 1 / 2 move the tile size per press.
+    private const double TileSizeStep = 40;
+
     // Decoded-image cache shared across view models (keyed by file path, so reopening a folder
     // keeps its work). Capacity defaults to a share of this machine's RAM — on a well-specced box
     // that's enough to hold an entire shoot, making every revisit instant.
@@ -39,9 +42,10 @@ public partial class MainWindow : Window
 
         App.OpenRequested += OnOpenRequestedFromAnotherProcess;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
-        PreviewKeyUp += MainWindow_PreviewKeyUp;
         TileGridViewControl.SetItems(ViewModel.Photos);
         TileGridViewControl.TileClicked += OnTileClicked;
+        SingleImageViewControl.WindowDragRequested += OnWindowDragRequested;
+        SingleImageViewControl.MaximiseToggleRequested += OnMaximiseToggleRequested;
     }
 
     private static (string Folder, string? File) ResolveFolderAndFile(string? requestedPath)
@@ -179,6 +183,13 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // The grid owns the arrow keys while it's open so you can browse it — the ListBox works out
+        // up/down across wrapped rows itself. Everything else below behaves the same in both modes.
+        if (ViewModel.IsGridVisible && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+        {
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.F:
@@ -190,6 +201,10 @@ public partial class MainWindow : Window
                 if (ViewModel.IsShortcutsOverlayVisible)
                 {
                     ViewModel.IsShortcutsOverlayVisible = false;
+                }
+                else if (ViewModel.IsGridVisible)
+                {
+                    HideGrid();
                 }
                 else if (ViewModel.IsFullscreen)
                 {
@@ -212,18 +227,39 @@ public partial class MainWindow : Window
 
             case Key.LeftShift:
             case Key.RightShift:
-                ViewModel.IsGridVisible = true;
-                GridHost.Visibility = Visibility.Visible;
-                SingleImageHost.Visibility = Visibility.Collapsed;
+                ToggleGrid();
+                e.Handled = true;
+                break;
+
+            // Open whichever tile you've browsed to.
+            case Key.Enter:
+                if (ViewModel.IsGridVisible)
+                {
+                    OpenTile(TileGridViewControl.SelectedItem);
+                    e.Handled = true;
+                }
+                break;
+
+            case Key.D1:
+            case Key.NumPad1:
+                ViewModel.TileSize -= TileSizeStep;
+                e.Handled = true;
+                break;
+
+            case Key.D2:
+            case Key.NumPad2:
+                ViewModel.TileSize += TileSizeStep;
+                e.Handled = true;
+                break;
+
+            case Key.D3:
+            case Key.NumPad3:
+                ViewModel.TileSize = MainViewModel.DefaultTileSize;
                 e.Handled = true;
                 break;
 
             case Key.M:
-                ViewModel.ToggleMark();
-                if (ViewModel.CurrentPhoto is not null)
-                {
-                    NavigationOverlayControl.Show(ViewModel.CurrentPhoto, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
-                }
+                MarkActivePhoto();
                 e.Handled = true;
                 break;
 
@@ -246,34 +282,71 @@ public partial class MainWindow : Window
 
     private void RefreshGridItems() => TileGridViewControl.SetItems(ViewModel.Photos);
 
-    // Releasing Shift closes the overview and lands on whichever tile the cursor was over
-    // (spec §7 press-and-hold); if the cursor wasn't over a tile, stay on the current photo.
-    private void MainWindow_PreviewKeyUp(object sender, KeyEventArgs e)
+    private void ToggleGrid()
     {
-        if (e.Key is not (Key.LeftShift or Key.RightShift))
+        if (ViewModel.IsGridVisible)
         {
-            return;
+            HideGrid();
         }
-
-        var hovered = TileGridViewControl.GetHoveredItem();
-        bool jumped = hovered is not null && TryJumpTo(hovered);
-
-        HideGrid();
-        if (jumped)
+        else
         {
-            _ = LoadCurrentPhotoAsync();
+            ShowGrid();
         }
     }
 
-    private void OnTileClicked(PhotoItem item)
+    private void ShowGrid()
     {
-        if (!TryJumpTo(item))
+        ViewModel.IsGridVisible = true;
+        GridHost.Visibility = Visibility.Visible;
+        SingleImageHost.Visibility = Visibility.Collapsed;
+
+        // Start browsing from where you already are, and hand the grid keyboard focus so the
+        // arrow keys drive it rather than seeking the single-image view behind it.
+        TileGridViewControl.SelectAndFocus(ViewModel.CurrentPhoto);
+    }
+
+    private void HideGrid()
+    {
+        ViewModel.IsGridVisible = false;
+        GridHost.Visibility = Visibility.Collapsed;
+        SingleImageHost.Visibility = Visibility.Visible;
+        Focus();
+    }
+
+    private void OnTileClicked(PhotoItem item) => OpenTile(item);
+
+    // Leave the grid on a specific photo — from a click or from Enter on the browsed selection.
+    private void OpenTile(PhotoItem? item)
+    {
+        if (item is null || !TryJumpTo(item))
         {
             return;
         }
 
         HideGrid();
         _ = LoadCurrentPhotoAsync();
+    }
+
+    // M means "mark what I'm looking at": the browsed tile when the grid is open, otherwise the
+    // photo on screen. Without this distinction, marking from the grid would silently mark
+    // whatever the single-image view happened to be showing behind it.
+    private void MarkActivePhoto()
+    {
+        if (ViewModel.IsGridVisible)
+        {
+            var selected = TileGridViewControl.SelectedItem;
+            if (selected is null) return;
+
+            ViewModel.ToggleMark(selected);
+            TileGridViewControl.RefreshMarkBadgeFor(selected);
+            return;
+        }
+
+        ViewModel.ToggleMark();
+        if (ViewModel.CurrentPhoto is not null)
+        {
+            NavigationOverlayControl.Show(ViewModel.CurrentPhoto, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
+        }
     }
 
     private bool TryJumpTo(PhotoItem item)
@@ -288,11 +361,18 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private void HideGrid()
+    private void OnWindowDragRequested(object? sender, EventArgs e)
     {
-        ViewModel.IsGridVisible = false;
-        GridHost.Visibility = Visibility.Collapsed;
-        SingleImageHost.Visibility = Visibility.Visible;
+        // Only valid while the mouse button is genuinely down; a stray call throws.
+        if (Mouse.LeftButton == MouseButtonState.Pressed)
+        {
+            DragMove();
+        }
+    }
+
+    private void OnMaximiseToggleRequested(object? sender, EventArgs e)
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     }
 
     private void ToggleFullscreen()

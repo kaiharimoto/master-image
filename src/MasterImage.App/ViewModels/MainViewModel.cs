@@ -73,10 +73,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { _isShortcutsOverlayVisible = value; OnPropertyChanged(); }
     }
 
+    public const double DefaultTileSize = 200;
+
+    // Upper bound matches the thumbnail pipeline's 512px generation width — past that the grid
+    // would just be upscaling cached thumbnails and going soft.
+    public const double MinTileSize = 60;
+    public const double MaxTileSize = 512;
+
     public double TileSize
     {
         get => _tileSize;
-        set { _tileSize = Math.Clamp(value, 80, 480); OnPropertyChanged(); }
+        set { _tileSize = Math.Clamp(value, MinTileSize, MaxTileSize); OnPropertyChanged(); }
     }
 
     public void SeekNext()
@@ -100,7 +107,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void ToggleMark()
     {
         if (CurrentPhoto is null) return;
-        _marksStore.Toggle(MarkKey(CurrentPhoto));
+        ToggleMark(CurrentPhoto);
+    }
+
+    // Marks a specific photo rather than the current one — the grid can be browsed independently
+    // of the single-image view, so pressing M there must act on the tile you're looking at.
+    public void ToggleMark(PhotoItem item)
+    {
+        _marksStore.Toggle(MarkKey(item));
         _marksStore.Save();
         OnPropertyChanged(nameof(IsCurrentMarked));
     }

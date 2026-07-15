@@ -105,10 +105,26 @@ public class MainViewModelTests : IDisposable
         var vm = new MainViewModel(_tempDir, null);
 
         vm.TileSize = 10;
-        Assert.Equal(80, vm.TileSize);
+        Assert.Equal(MainViewModel.MinTileSize, vm.TileSize);
 
+        // Upper bound tracks the thumbnail pipeline's generation width — bigger tiles than the
+        // cached thumbnail would just upscale it.
         vm.TileSize = 10000;
-        Assert.Equal(480, vm.TileSize);
+        Assert.Equal(MainViewModel.MaxTileSize, vm.TileSize);
+    }
+
+    [Fact]
+    public void ToggleMarkCanTargetAPhotoOtherThanTheCurrentOne()
+    {
+        var vm = new MainViewModel(_tempDir, Path.Combine(_tempDir, "DSC0.jpg"));
+        var other = vm.Photos.Single(p => p.Stem == "DSC2");
+
+        // The grid is browsed independently of the single-image view, so M there must mark the
+        // tile you're looking at, not whatever is loaded behind it.
+        vm.ToggleMark(other);
+
+        Assert.True(vm.IsMarked(other));
+        Assert.False(vm.IsCurrentMarked);
     }
 
     [Fact]

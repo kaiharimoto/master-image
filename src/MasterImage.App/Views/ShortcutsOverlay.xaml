@@ -2,19 +2,32 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Border Background="#DD000000">
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="460">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="520">
             <TextBlock Text="Shortcuts" FontSize="20" FontWeight="Bold" Foreground="White" Margin="0,0,0,12" />
-            <TextBlock Foreground="White" Text="Left / Right — seek previous/next photo" Margin="0,2" />
-            <TextBlock Foreground="White" Text="Scroll (single view) — zoom in/out at cursor" Margin="0,2" />
-            <TextBlock Foreground="White" Text="Click + drag (zoomed) — pan" Margin="0,2" />
-            <TextBlock Foreground="White" Text="Shift (hold) — show tile grid overview" Margin="0,2" />
-            <TextBlock Foreground="White" Text="Shift + scroll (grid open) — adjust tile size" Margin="0,2" />
-            <TextBlock Foreground="White" Text="L — force full-folder thumbnail preload" Margin="0,2" />
-            <TextBlock Foreground="White" Text="M — mark/unmark current photo" Margin="0,2" />
+
+            <TextBlock Text="Viewing" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,4,0,4" />
+            <TextBlock Foreground="White" Text="Left / Right — previous / next photo" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Scroll — zoom in/out at the cursor" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Drag (zoomed in) — pan around the photo" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Drag (not zoomed) — move the window" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Double-click — maximise / restore" Margin="0,2" />
+            <TextBlock Foreground="White" Text="F — fullscreen / windowed" Margin="0,2" />
+
+            <TextBlock Text="Tile grid" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
+            <TextBlock Foreground="White" Text="Shift — toggle the tile grid" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Arrows — browse tiles" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Enter / click — open the selected tile" Margin="0,2" />
+            <TextBlock Foreground="White" Text="1 / 2 — smaller / bigger tiles      3 — default size" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Shift + scroll — resize tiles smoothly" Margin="0,2" />
+
+            <TextBlock Text="Culling" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
+            <TextBlock Foreground="White" Text="M — mark / unmark (the selected tile, in grid)" Margin="0,2" />
             <TextBlock Foreground="White" Text="N — move marked photos into selected/" Margin="0,2" />
-            <TextBlock Foreground="White" Text="F — toggle fullscreen / windowed" Margin="0,2" />
+            <TextBlock Foreground="White" Text="L — preload the whole folder for instant seeking" Margin="0,2" />
+
+            <TextBlock Text="Other" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
             <TextBlock Foreground="White" Text="I — toggle this panel" Margin="0,2" />
-            <TextBlock Foreground="White" Text="Esc — close panel / exit fullscreen" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Esc — close panel / close grid / exit fullscreen" Margin="0,2" />
             <TextBlock Foreground="#CCCCCC" Text="Alt+F4 — close Master Image" Margin="0,2" />
         </StackPanel>
     </Border>

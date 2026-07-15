@@ -14,6 +14,14 @@ public partial class SingleImageView : UserControl
     private Point _dragStart;
     private bool _isDragging;
 
+    // Raised when a left-drag starts on a photo that isn't zoomed in. There's no title bar to grab
+    // (the window is borderless by design), and at fit-to-window a left-drag has nothing to pan,
+    // so the gesture is free to mean "move the window" — which is what you'd instinctively try.
+    public event EventHandler? WindowDragRequested;
+
+    // Raised on double-click, for maximise/restore — the other thing a title bar would have given us.
+    public event EventHandler? MaximiseToggleRequested;
+
     public SingleImageView()
     {
         InitializeComponent();
@@ -67,7 +75,22 @@ public partial class SingleImageView : UserControl
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (ImageTransform.Matrix.M11 <= MinScale) return;
+        if (e.ClickCount == 2)
+        {
+            MaximiseToggleRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+            return;
+        }
+
+        if (ImageTransform.Matrix.M11 <= MinScale)
+        {
+            // Not zoomed, so there's nothing to pan — drag the window instead. Must be raised
+            // synchronously from the mouse-down: Window.DragMove() requires the button to still
+            // be physically down when it's called.
+            WindowDragRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
         _isDragging = true;
         _dragStart = e.GetPosition(this);
         CaptureMouse();
