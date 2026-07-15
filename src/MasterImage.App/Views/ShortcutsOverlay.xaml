@@ -27,6 +27,7 @@
 
             <TextBlock Text="Other" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
             <TextBlock Foreground="White" Text="I — toggle this panel" Margin="0,2" />
+            <TextBlock Foreground="White" Text="U — check for updates" Margin="0,2" />
             <TextBlock Foreground="White" Text="Esc — close panel / close grid / exit fullscreen" Margin="0,2" />
             <TextBlock Foreground="#CCCCCC" Text="Alt+F4 — close Master Image" Margin="0,2" />
         </StackPanel>

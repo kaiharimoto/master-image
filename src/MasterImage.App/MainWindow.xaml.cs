@@ -35,6 +35,12 @@ public partial class MainWindow : Window
     // the user has since moved to.
     private int _loadGeneration;
 
+    private readonly AppUpdater _updater = new();
+
+    // Set once an update has been found and announced, so the second U installs rather than
+    // re-checking. Deliberate: a stray U mid-cull must not be able to restart the app.
+    private bool _updateOffered;
+
     public MainViewModel ViewModel { get; private set; }
 
     public MainWindow(string? requestedPath)
@@ -190,6 +196,31 @@ public partial class MainWindow : Window
             }
         });
 
+        await PreloadThenWarmCacheAsync(progress, total);
+    }
+
+    // First U checks; a second U (once something's pending) installs and restarts. Two presses on
+    // purpose — a stray U mid-cull must not be able to restart the app out from under you.
+    private async Task HandleUpdateCheckAsync()
+    {
+        if (!_updateOffered)
+        {
+            var result = await _updater.CheckAsync();
+            NavigationOverlayControl.ShowMessage(result.Message);
+            _updateOffered = result.UpdateAvailable;
+            return;
+        }
+
+        NavigationOverlayControl.ShowSticky("Downloading update…");
+        string? error = await _updater.DownloadAndApplyAsync();
+
+        // Only reached when the update failed — a success restarts the process.
+        _updateOffered = false;
+        NavigationOverlayControl.ShowMessage(error ?? "Update failed.");
+    }
+
+    private async Task PreloadThenWarmCacheAsync(IProgress<int> progress, int total)
+    {
         await ViewModel.PreloadAllAsync(progress);
 
         // "Preload all the images and generate thumbnails" — the thumbnails above are what the grid
@@ -297,6 +328,11 @@ public partial class MainWindow : Window
 
             case Key.L:
                 _ = HandlePreloadAllAsync();
+                e.Handled = true;
+                break;
+
+            case Key.U:
+                _ = HandleUpdateCheckAsync();
                 e.Handled = true;
                 break;
 
