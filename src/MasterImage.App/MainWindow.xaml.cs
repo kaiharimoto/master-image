@@ -165,6 +165,11 @@ public partial class MainWindow : Window
                 _ = HandlePreloadAllAsync();
                 e.Handled = true;
                 break;
+
+            case Key.I:
+                ViewModel.IsShortcutsOverlayVisible = !ViewModel.IsShortcutsOverlayVisible;
+                e.Handled = true;
+                break;
         }
     }
 

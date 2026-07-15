@@ -7,6 +7,9 @@
         WindowStyle="None"
         ResizeMode="CanResizeWithGrip"
         Width="1200" Height="800">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
     <Grid x:Name="RootGrid">
         <ContentControl x:Name="SingleImageHost">
             <local:SingleImageView x:Name="SingleImageViewControl" />
@@ -17,6 +20,9 @@
         <ContentControl x:Name="NavigationOverlayHost">
             <local:NavigationOverlay x:Name="NavigationOverlayControl" />
         </ContentControl>
-        <ContentControl x:Name="ShortcutsOverlayHost" Visibility="Collapsed" />
+        <ContentControl x:Name="ShortcutsOverlayHost"
+                        Visibility="{Binding IsShortcutsOverlayVisible, Converter={StaticResource BoolToVis}}">
+            <local:ShortcutsOverlay />
+        </ContentControl>
     </Grid>
 </Window>
