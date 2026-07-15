@@ -23,7 +23,10 @@ public static class PhotoSet
         // Grouping preserves the order files first appear, so the natural sort above still decides
         // the order photos come out in.
         return files
-            .GroupBy(Path.GetFileNameWithoutExtension, StringComparer.OrdinalIgnoreCase)
+            // GetFileNameWithoutExtension is declared string?, but these paths come straight from
+            // EnumerateFiles and always have a filename — assert it rather than propagate a
+            // nullable key through the grouping.
+            .GroupBy(path => Path.GetFileNameWithoutExtension(path)!, StringComparer.OrdinalIgnoreCase)
             .SelectMany(BuildItems)
             .ToList();
     }
