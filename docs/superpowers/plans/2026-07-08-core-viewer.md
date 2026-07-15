@@ -2445,16 +2445,14 @@ git commit -m "Add WPF app shell: single-instance startup, borderless fullscreen
     <Grid ClipToBounds="True" Background="Transparent">
         <Image x:Name="PhotoImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality">
             <Image.RenderTransform>
-                <TransformGroup>
-                    <ScaleTransform x:Name="ImageScale" ScaleX="1" ScaleY="1" />
-                    <TranslateTransform x:Name="ImageTranslate" X="0" Y="0" />
-                </TransformGroup>
+                <MatrixTransform x:Name="ImageTransform" />
             </Image.RenderTransform>
-            <Image.RenderTransformOrigin>0.5,0.5</Image.RenderTransformOrigin>
         </Image>
     </Grid>
 </UserControl>
 ```
+
+A single `MatrixTransform` (rather than a `ScaleTransform` + `TranslateTransform` pair with a fixed `RenderTransformOrigin`) is what makes cursor-anchored zoom straightforward: `Matrix.ScaleAt(factor, factor, cursorX, cursorY)` composes the scale-about-a-point and the resulting translation in one step, and `Matrix.Translate` handles panning on the same matrix. The `Background="Transparent"` on the Grid is load-bearing — without a brush the Grid isn't hit-testable and the control never receives mouse events.
 
 - [ ] **Step 2: Create `SingleImageView.xaml.cs` with zoom-at-cursor and drag-to-pan**
 
@@ -2463,6 +2461,7 @@ git commit -m "Add WPF app shell: single-instance startup, borderless fullscreen
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace MasterImage.App.Views;
@@ -2490,25 +2489,37 @@ public partial class SingleImageView : UserControl
         ResetZoom();
     }
 
-    public void ResetZoom()
-    {
-        ImageScale.ScaleX = 1;
-        ImageScale.ScaleY = 1;
-        ImageTranslate.X = 0;
-        ImageTranslate.Y = 0;
-    }
+    public void ResetZoom() => ImageTransform.Matrix = Matrix.Identity;
 
+    // Zoom anchored on the cursor (spec §5): scale about the pointer's position in this control's
+    // coordinate space, so whatever detail is under the cursor stays under the cursor as you zoom,
+    // instead of the image drifting toward its centre. MinScale 1.0 = fit-to-window (Stretch
+    // Uniform), so you can zoom in to inspect and back out to the fitted view, but no further.
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
     {
+        var matrix = ImageTransform.Matrix;
+        double currentScale = matrix.M11;
         double factor = e.Delta > 0 ? 1.15 : 1 / 1.15;
-        double newScale = Math.Clamp(ImageScale.ScaleX * factor, MinScale, MaxScale);
-        ImageScale.ScaleX = newScale;
-        ImageScale.ScaleY = newScale;
 
-        if (newScale == MinScale)
+        // Land exactly on the limit rather than overshooting it.
+        double targetScale = Math.Clamp(currentScale * factor, MinScale, MaxScale);
+        if (targetScale == currentScale)
         {
-            ImageTranslate.X = 0;
-            ImageTranslate.Y = 0;
+            e.Handled = true;
+            return;
+        }
+        factor = targetScale / currentScale;
+
+        if (targetScale == MinScale)
+        {
+            // Back at fit-to-window: drop any accumulated pan so the photo re-centres cleanly.
+            ResetZoom();
+        }
+        else
+        {
+            var origin = e.GetPosition(this);
+            matrix.ScaleAt(factor, factor, origin.X, origin.Y);
+            ImageTransform.Matrix = matrix;
         }
 
         e.Handled = true;
@@ -2516,7 +2527,7 @@ public partial class SingleImageView : UserControl
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (ImageScale.ScaleX <= MinScale) return;
+        if (ImageTransform.Matrix.M11 <= MinScale) return;
         _isDragging = true;
         _dragStart = e.GetPosition(this);
         CaptureMouse();
@@ -2526,8 +2537,9 @@ public partial class SingleImageView : UserControl
     {
         if (!_isDragging) return;
         var current = e.GetPosition(this);
-        ImageTranslate.X += current.X - _dragStart.X;
-        ImageTranslate.Y += current.Y - _dragStart.Y;
+        var matrix = ImageTransform.Matrix;
+        matrix.Translate(current.X - _dragStart.X, current.Y - _dragStart.Y);
+        ImageTransform.Matrix = matrix;
         _dragStart = current;
     }
 
@@ -2539,7 +2551,7 @@ public partial class SingleImageView : UserControl
 }
 ```
 
-This implements zoom that's centered visually via `RenderTransformOrigin="0.5,0.5"` (simplest correct approach: zoom stays centered on the image middle rather than the literal cursor position — true cursor-centered zoom would require adjusting `ImageTranslate` proportionally to cursor offset each wheel tick; noted as a nice-to-have refinement, not blocking for this task since the spec's core requirement — scroll zooms in/out, drag pans — is met).
+`Matrix` is a struct, so `ImageTransform.Matrix` returns a *copy* — every handler must mutate the local and assign it back (`ImageTransform.Matrix = matrix`). Mutating the property's return value directly compiles but silently does nothing.
 
 - [ ] **Step 3: Wire `SingleImageView` into `MainWindow`**
 
