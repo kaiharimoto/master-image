@@ -5,6 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Velopack" Version="1.2.0" />
     <PackageReference Include="VirtualizingWrapPanel" Version="2.5.3" />
   </ItemGroup>
 
@@ -14,6 +15,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+
+    <!-- vpk reads this to name the release, and the app reports it when checking for updates. -->
+    <Version>1.0.0</Version>
+    <AssemblyTitle>Master Image</AssemblyTitle>
+    <Product>Master Image</Product>
   </PropertyGroup>
 
 </Project>
