@@ -110,4 +110,33 @@ public class ImageLoaderRawTests
         bool supported = ImageLoader.IsRawDecodingAvailable();
         Assert.True(supported || !supported);
     }
+
+    [Fact]
+    public void DetectionAgreesWithWhetherRawActuallyDecodes()
+    {
+        if (!File.Exists(LandscapeRaw)) return;
+
+        // The check above is deliberately tautological so it can't fail on a machine without the
+        // codec — which means it proves nothing. This one has teeth: if a real RAW genuinely
+        // decodes, the codec plainly exists, so detection saying otherwise is a bug that would have
+        // the app nagging about a codec that's already installed. Cross-checking against observable
+        // behaviour keeps it honest without hard-coding an answer that varies by machine.
+        bool reallyDecodes = ImageLoader.TryLoadAtSize(LandscapeRaw, decodePixelWidth: 512) is not null;
+        if (!reallyDecodes) return; // machine genuinely has no RAW codec — nothing to contradict
+
+        Assert.True(ImageLoader.IsRawDecodingAvailable(),
+            "a real RAW decoded, so the codec exists — detection must not claim it's missing");
+    }
+
+    [Fact]
+    public void RawExtensionsMatchRegardlessOfCase()
+    {
+        // Detection compares WIC's registered extensions against RawFormats.Extensions, and WIC
+        // registers them UPPERCASE (".ARW"). A case-sensitive set would therefore find no match and
+        // report "no RAW codec" on a machine that has one. Pin the case-insensitivity that makes
+        // the whole detection work.
+        Assert.Contains(".ARW", RawFormats.Extensions);
+        Assert.Contains(".arw", RawFormats.Extensions);
+        Assert.Contains(".NEF", RawFormats.Extensions);
+    }
 }
