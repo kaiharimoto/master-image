@@ -112,7 +112,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         foreach (var item in marked)
         {
-            _marksStore.Toggle(MarkKey(item));
+            // Only clear the mark for items that actually moved. A failed move (name collision in
+            // selected/, or a locked file — both surfaced in result.Failures) leaves the photo
+            // right where it was; keeping its mark lets the photographer resolve the conflict and
+            // press N again, instead of silently losing that pick from their selection.
+            if (item.FilePaths.All(p => !File.Exists(p)))
+            {
+                _marksStore.Toggle(MarkKey(item));
+            }
         }
         _marksStore.Save();
 

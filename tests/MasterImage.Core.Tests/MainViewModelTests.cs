@@ -79,6 +79,27 @@ public class MainViewModelTests : IDisposable
     }
 
     [Fact]
+    public void MoveMarkedToSelectedKeepsTheMarkOnAPhotoThatFailedToMove()
+    {
+        // Pre-create a colliding file so DSC0's move fails.
+        string selectedFolder = Path.Combine(_tempDir, "selected");
+        Directory.CreateDirectory(selectedFolder);
+        File.WriteAllBytes(Path.Combine(selectedFolder, "DSC0.jpg"), new byte[] { 9 });
+
+        var vm = new MainViewModel(_tempDir, Path.Combine(_tempDir, "DSC0.jpg"));
+        vm.ToggleMark();
+
+        var result = vm.MoveMarkedToSelected();
+
+        Assert.Equal(0, result.MovedFileCount);
+        Assert.Single(result.Failures);
+        // DSC0 stayed put, so it must still be marked — otherwise the pick is silently lost and
+        // the photographer can't just resolve the collision and press N again.
+        Assert.Equal("DSC0", vm.CurrentPhoto!.Stem);
+        Assert.True(vm.IsCurrentMarked);
+    }
+
+    [Fact]
     public void TileSizeIsClampedToReasonableBounds()
     {
         var vm = new MainViewModel(_tempDir, null);
