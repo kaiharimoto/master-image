@@ -101,9 +101,30 @@ public partial class MainWindow : Window
         if (generation != _loadGeneration) return;
 
         SingleImageViewControl.SetImage(image);
+
+        if (image is null)
+        {
+            NavigationOverlayControl.ShowMessage(DescribeLoadFailure(photo));
+            return;
+        }
+
         NavigationOverlayControl.Show(photo, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
 
         PrefetchNeighbours();
+    }
+
+    // A RAW that won't open on a machine with no RAW codec is the one failure with a fix the user
+    // can act on, so name it. Anything else is genuinely just a bad file.
+    private static string DescribeLoadFailure(PhotoItem photo)
+    {
+        string name = Path.GetFileName(photo.PrimaryFilePath);
+
+        if (RawFormats.IsRaw(photo.PrimaryFilePath) && !ImageLoader.IsRawDecodingAvailable())
+        {
+            return $"Can't open {name} — RAW support needs the free \"Raw Image Extension\" from the Microsoft Store.";
+        }
+
+        return $"Can't open {name}.";
     }
 
     // Decode the photos around the current one ahead of time. Seeking is the most-used action in a

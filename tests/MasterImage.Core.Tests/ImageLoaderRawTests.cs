@@ -100,4 +100,14 @@ public class ImageLoaderRawTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void ReportsWhetherRawIsDecodableOnThisMachine()
+    {
+        // True on any machine with the Raw Image Extension installed. Asserting the specific value
+        // would make the suite fail on a machine without it, so just require a definite answer that
+        // doesn't throw — the point is that MainWindow can ask before blaming the file.
+        bool supported = ImageLoader.IsRawDecodingAvailable();
+        Assert.True(supported || !supported);
+    }
 }

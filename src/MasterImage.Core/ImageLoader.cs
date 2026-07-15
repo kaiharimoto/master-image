@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Microsoft.Win32;
 
 namespace MasterImage.Core;
 
@@ -14,6 +15,57 @@ public static class ImageLoader
     public static BitmapSource? TryLoadFullResolution(string filePath)
     {
         return TryLoad(filePath, decodePixelWidth: 0);
+    }
+
+    // Whether this machine can decode RAW at all — i.e. whether Windows' Raw Image Extension is
+    // installed. Asked when a RAW fails to open, so the app can say "install the Raw Image
+    // Extension" rather than leaving a blank frame and no explanation.
+    //
+    // Answered by reading WIC's own decoder registrations and asking whether any registered decoder
+    // claims a RAW extension. Decoding a probe file would be the obvious alternative but doesn't
+    // actually work: WIC throws NotSupportedException both for "no codec for this format" and for
+    // "bytes aren't valid", so a synthetic probe can't tell a missing codec from a bad file.
+    //
+    // Lazy: the answer can't change while the process is running, and this sits on a failure path.
+    private static readonly Lazy<bool> RawDecodingAvailable = new(DetectRawDecoder);
+
+    public static bool IsRawDecodingAvailable() => RawDecodingAvailable.Value;
+
+    private static bool DetectRawDecoder()
+    {
+        // CATID_WICBitmapDecoders — every installed WIC decoder registers an instance under here.
+        const string DecoderCategory = @"CLSID\{7ED96837-96F0-4812-B211-F13C24117ED3}\Instance";
+
+        try
+        {
+            using var instances = Registry.ClassesRoot.OpenSubKey(DecoderCategory);
+            if (instances is null)
+            {
+                return false;
+            }
+
+            foreach (string clsid in instances.GetSubKeyNames())
+            {
+                using var decoder = Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid}");
+                if (decoder?.GetValue("FileExtensions") is not string extensions)
+                {
+                    continue;
+                }
+
+                if (extensions.Split(',').Any(e => RawFormats.Extensions.Contains(e.Trim())))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception)
+        {
+            // Can't read the registry — don't claim RAW is broken on that basis; let the real
+            // decode attempt be the judge and fall back to the generic failure message.
+            return true;
+        }
     }
 
     private static BitmapSource? TryLoad(string filePath, int decodePixelWidth)
