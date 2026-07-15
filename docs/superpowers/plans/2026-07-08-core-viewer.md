@@ -2210,11 +2210,12 @@ This task wires up `App.xaml.cs` and `MainWindow.xaml.cs` together in one step, 
 <!-- src/MasterImage.App/App.xaml -->
 <Application x:Class="MasterImage.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             StartupUri="MainWindow.xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources />
 </Application>
 ```
+
+Note the deliberate absence of `StartupUri` (the `dotnet new wpf` template sets it to `MainWindow.xaml` — it must be removed). `OnStartup` below constructs the window itself, passing the command-line path. If `StartupUri` were left set, WPF would *also* try to create a second `MainWindow` by loading that XAML, which instantiates the root type via its **parameterless** constructor — and `MainWindow` only has `MainWindow(string?)`. That's a `MissingMethodException` on launch, every launch.
 
 - [ ] **Step 2: Replace `App.xaml.cs` with single-instance handling**
 
@@ -2222,6 +2223,7 @@ A named `Mutex` detects whether another instance is already running. If so, this
 
 ```csharp
 // src/MasterImage.App/App.xaml.cs
+using System.IO;
 using System.IO.Pipes;
 using System.Threading;
 using System.Windows;
@@ -2315,6 +2317,7 @@ public partial class App : Application
 
 ```csharp
 // src/MasterImage.App/MainWindow.xaml.cs
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using MasterImage.App.ViewModels;
