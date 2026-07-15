@@ -1459,6 +1459,39 @@ public class ThumbnailCacheTests : IDisposable
 
         Assert.NotEqual(firstWriteTime, File.GetLastWriteTimeUtc(thumbPath));
     }
+
+    [Fact]
+    public void PruneOrphansDeletesCachedThumbnailForARemovedSource()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        TestImageFactory.WriteTestJpeg(sourcePath, width: 640, height: 480);
+        var item = new PhotoItem("DSC1", new[] { sourcePath });
+
+        var cache = new ThumbnailCache(_tempDir);
+        cache.GetOrCreateThumbnail(item, targetPixelWidth: 100);
+        Assert.Single(Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg"));
+
+        // The source is gone (e.g. culled/moved). Pruning against an empty current-set must
+        // delete the now-orphaned cached thumbnail file from disk, not just forget the manifest entry.
+        cache.PruneOrphans(new List<PhotoItem>());
+
+        Assert.Empty(Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg"));
+    }
+
+    [Fact]
+    public void PruneOrphansKeepsThumbnailForAStillPresentSource()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        TestImageFactory.WriteTestJpeg(sourcePath, width: 640, height: 480);
+        var item = new PhotoItem("DSC1", new[] { sourcePath });
+
+        var cache = new ThumbnailCache(_tempDir);
+        cache.GetOrCreateThumbnail(item, targetPixelWidth: 100);
+
+        cache.PruneOrphans(new List<PhotoItem> { item });
+
+        Assert.Single(Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg"));
+    }
 }
 ```
 
@@ -1538,7 +1571,7 @@ public sealed class ThumbnailCache
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter ThumbnailCacheTests`
-Expected: `Passed! - Failed: 0, Passed: 4`
+Expected: `Passed! - Failed: 0, Passed: 6`
 
 - [ ] **Step 5: Commit**
 
