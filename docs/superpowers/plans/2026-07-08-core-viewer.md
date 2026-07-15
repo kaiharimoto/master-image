@@ -2958,7 +2958,7 @@ git commit -m "Add tile grid view with Shift-hold overview and Shift+scroll resi
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              IsHitTestVisible="False">
     <Grid VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="16">
-        <Border x:Name="Panel" Background="#AA000000" CornerRadius="4" Padding="10,6" Opacity="0">
+        <Border x:Name="OverlayPanel" Background="#AA000000" CornerRadius="4" Padding="10,6" Opacity="0">
             <StackPanel Orientation="Horizontal">
                 <TextBlock x:Name="MarkIndicator" Text="&#9733; " Foreground="Gold" FontWeight="Bold" Visibility="Collapsed" />
                 <TextBlock x:Name="FileNameText" Foreground="White" />
@@ -2973,6 +2973,9 @@ git commit -m "Add tile grid view with Shift-hold overview and Shift+scroll resi
 
 ```csharp
 // src/MasterImage.App/Views/NavigationOverlay.xaml.cs
+using System;
+using System.IO;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
 using MasterImage.Core;
@@ -2988,39 +2991,52 @@ public partial class NavigationOverlay : UserControl
 
     public void Show(PhotoItem photo, int index, int total, bool isMarked)
     {
-        FileNameText.Text = System.IO.Path.GetFileName(photo.PrimaryFilePath);
+        FileNameText.Text = Path.GetFileName(photo.PrimaryFilePath);
         PositionText.Text = $"{index + 1}/{total}";
-        MarkIndicator.Visibility = isMarked ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
-
-        Panel.BeginAnimation(OpacityProperty, null);
-        Panel.Opacity = 1;
-
-        var fadeOut = new DoubleAnimation(1, 0, new System.Windows.Duration(System.TimeSpan.FromSeconds(1.5)))
-        {
-            BeginTime = System.TimeSpan.FromSeconds(1.2)
-        };
-        Panel.BeginAnimation(OpacityProperty, fadeOut);
+        MarkIndicator.Visibility = isMarked ? Visibility.Visible : Visibility.Collapsed;
+        FadeOutAfter(TimeSpan.FromSeconds(1.2));
     }
 
+    // Longer on-screen time than Show(): a sentence is read-heavy compared with a filename.
     public void ShowMessage(string message)
+    {
+        SetMessage(message);
+        FadeOutAfter(TimeSpan.FromSeconds(2.5));
+    }
+
+    // Stays put until something else replaces it — for long-running progress, where a fade-out
+    // would hide the status while the operation is still going.
+    public void ShowSticky(string message)
+    {
+        SetMessage(message);
+        OverlayPanel.BeginAnimation(OpacityProperty, null);
+        OverlayPanel.Opacity = 1;
+    }
+
+    private void SetMessage(string message)
     {
         FileNameText.Text = message;
         PositionText.Text = "";
-        MarkIndicator.Visibility = System.Windows.Visibility.Collapsed;
+        MarkIndicator.Visibility = Visibility.Collapsed;
+    }
 
-        Panel.BeginAnimation(OpacityProperty, null);
-        Panel.Opacity = 1;
+    private void FadeOutAfter(TimeSpan delay)
+    {
+        // Clear any in-flight animation first, otherwise the previous fade keeps running and
+        // the panel we just set to fully opaque immediately starts vanishing again.
+        OverlayPanel.BeginAnimation(OpacityProperty, null);
+        OverlayPanel.Opacity = 1;
 
-        var fadeOut = new DoubleAnimation(1, 0, new System.Windows.Duration(System.TimeSpan.FromSeconds(1.5)))
-        {
-            BeginTime = System.TimeSpan.FromSeconds(2.5)
-        };
-        Panel.BeginAnimation(OpacityProperty, fadeOut);
+        OverlayPanel.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(1, 0, new Duration(TimeSpan.FromSeconds(1.5))) { BeginTime = delay });
     }
 }
 ```
 
-`ShowMessage` is the general-purpose banner (longer on-screen time since it's read-heavy text, not just a filename) — used next to replace the interim `N`-key `MessageBox.Show` from Task 13 with a non-blocking overlay, since a modal dialog on every cull-move would break the keyboard-driven flow this app is built around.
+`ShowMessage` is the general-purpose banner — used next to replace the interim `N`-key `MessageBox.Show` from Task 13 with a non-blocking overlay, since a modal dialog on every cull-move would break the keyboard-driven flow this app is built around. `ShowSticky` backs the `L` preload progress readout (see below), which must stay visible for the whole operation rather than fading after a couple of seconds.
+
+The element is named `OverlayPanel`, not `Panel`: `x:Name="Panel"` would generate a field that shadows the `System.Windows.Controls.Panel` type in this file's scope — legal but needlessly confusing.
 
 - [ ] **Step 3: Wire the overlay into `MainWindow`, and add `L` for full preload**
 
@@ -3088,9 +3104,40 @@ Add the `L` case to the switch:
 
 ```csharp
 case Key.L:
-    _ = ViewModel.PreloadAllAsync();
+    _ = HandlePreloadAllAsync();
     e.Handled = true;
     break;
+```
+
+And add this method alongside `HandleCullMoveAsync`:
+
+```csharp
+private async Task HandlePreloadAllAsync()
+{
+    int total = ViewModel.Photos.Count;
+    if (total == 0)
+    {
+        NavigationOverlayControl.ShowMessage("Nothing to preload — no photos in this folder.");
+        return;
+    }
+
+    // Without a readout, L looks like it does nothing: on a big shoot the work takes tens of
+    // seconds with no other visible effect (thumbnails only surface later, in the grid).
+    NavigationOverlayControl.ShowSticky($"Preloading 0/{total}…");
+
+    // Progress<T> marshals every report onto the UI thread, so on a folder of thousands that's
+    // thousands of callbacks — repaint every 10th (and the last) rather than each one.
+    var progress = new Progress<int>(done =>
+    {
+        if (done % 10 == 0 || done == total)
+        {
+            NavigationOverlayControl.ShowSticky($"Preloading {done}/{total}…");
+        }
+    });
+
+    await ViewModel.PreloadAllAsync(progress);
+    NavigationOverlayControl.ShowMessage($"Preloaded {total} thumbnails.");
+}
 ```
 
 - [ ] **Step 4: Build and manually verify**
