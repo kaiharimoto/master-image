@@ -11,6 +11,15 @@ public partial class MainWindow : Window
     private WindowState _preFullscreenState;
     private ResizeMode _preFullscreenResizeMode;
 
+    // Decoded-image cache shared across view models (it's keyed by file path, and reopening a
+    // folder shouldn't throw away work). Sized to comfortably hold the current photo plus the
+    // neighbours we read ahead in both directions.
+    private readonly PhotoImageCache _imageCache = new(capacity: 7, decodePixelWidth: 1920);
+
+    // Incremented on every load so a slow decode from an abandoned seek can't overwrite the photo
+    // the user has since moved to.
+    private int _loadGeneration;
+
     public MainViewModel ViewModel { get; private set; }
 
     public MainWindow(string? requestedPath)
@@ -57,11 +66,44 @@ public partial class MainWindow : Window
     private async Task LoadCurrentPhotoAsync()
     {
         var photo = ViewModel.CurrentPhoto;
-        if (photo is null) return;
+        if (photo is null)
+        {
+            SingleImageViewControl.SetImage(null);
+            return;
+        }
 
-        var image = await Task.Run(() => Core.ImageLoader.TryLoadAtSize(photo.PrimaryFilePath, decodePixelWidth: 1920));
+        int generation = ++_loadGeneration;
+
+        var decode = _imageCache.GetAsync(photo);
+
+        // Nothing to wait for when it's already decoded (the common case once read-ahead is
+        // warm) — skip the await so the photo swaps within this same input event rather than
+        // after a dispatcher round-trip.
+        var image = decode.IsCompletedSuccessfully ? decode.Result : await decode;
+
+        // A newer seek started while this was decoding; that one owns the screen now.
+        if (generation != _loadGeneration) return;
+
         SingleImageViewControl.SetImage(image);
         NavigationOverlayControl.Show(photo, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
+
+        PrefetchNeighbours();
+    }
+
+    // Decode the photos on either side of the current one ahead of time. Seeking is the most-used
+    // action in a cull and a 40MB camera JPEG takes hundreds of milliseconds to decode, so without
+    // this every keypress stalls on the disk. Ordered nearest-first: the very next photo is the one
+    // most likely to be needed, and the pipeline's worker limit means order decides what lands first.
+    private void PrefetchNeighbours()
+    {
+        var photos = ViewModel.Photos;
+        if (photos.Count <= 1) return;
+
+        foreach (int offset in new[] { 1, -1, 2, -2 })
+        {
+            int index = ((ViewModel.CurrentIndex + offset) % photos.Count + photos.Count) % photos.Count;
+            _imageCache.Prefetch(photos[index]);
+        }
     }
 
     private async Task HandleCullMoveAsync()
