@@ -1972,6 +1972,27 @@ public class MainViewModelTests : IDisposable
     }
 
     [Fact]
+    public void MoveMarkedToSelectedKeepsTheMarkOnAPhotoThatFailedToMove()
+    {
+        // Pre-create a colliding file so DSC0's move fails.
+        string selectedFolder = Path.Combine(_tempDir, "selected");
+        Directory.CreateDirectory(selectedFolder);
+        File.WriteAllBytes(Path.Combine(selectedFolder, "DSC0.jpg"), new byte[] { 9 });
+
+        var vm = new MainViewModel(_tempDir, Path.Combine(_tempDir, "DSC0.jpg"));
+        vm.ToggleMark();
+
+        var result = vm.MoveMarkedToSelected();
+
+        Assert.Equal(0, result.MovedFileCount);
+        Assert.Single(result.Failures);
+        // DSC0 stayed put, so it must still be marked — otherwise the pick is silently lost and
+        // the photographer can't just resolve the collision and press N again.
+        Assert.Equal("DSC0", vm.CurrentPhoto!.Stem);
+        Assert.True(vm.IsCurrentMarked);
+    }
+
+    [Fact]
     public void TileSizeIsClampedToReasonableBounds()
     {
         var vm = new MainViewModel(_tempDir, null);
@@ -2121,7 +2142,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         foreach (var item in marked)
         {
-            _marksStore.Toggle(MarkKey(item));
+            // Only clear the mark for items that actually moved. A failed move (name collision in
+            // selected/, or a locked file — both surfaced in result.Failures) leaves the photo
+            // right where it was; keeping its mark lets the photographer resolve the conflict and
+            // press N again, instead of silently losing that pick from their selection.
+            if (item.FilePaths.All(p => !File.Exists(p)))
+            {
+                _marksStore.Toggle(MarkKey(item));
+            }
         }
         _marksStore.Save();
 
@@ -2155,7 +2183,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter MainViewModelTests`
-Expected: `Passed! - Failed: 0, Passed: 8`
+Expected: `Passed! - Failed: 0, Passed: 9`
 
 - [ ] **Step 6: Commit**
 
@@ -2781,6 +2809,20 @@ TileGridViewControl.SetItems(ViewModel.Photos);
 TileGridViewControl.TileClicked += OnTileClicked;
 ```
 
+`SetItems` hands the grid the *current* `Photos` list imperatively, so it must be re-called every time `ViewModel.Photos` is replaced — otherwise the grid keeps rendering a stale list. `MainViewModel.MoveMarkedToSelected` reassigns `_photos` after a cull, and `OnOpenRequestedFromAnotherProcess` swaps in a whole new view model, so both need a refresh. Add this helper:
+
+```csharp
+private void RefreshGridItems() => TileGridViewControl.SetItems(ViewModel.Photos);
+```
+
+and call it at the end of `OnOpenRequestedFromAnotherProcess` (right after `DataContext = ViewModel;`):
+
+```csharp
+RefreshGridItems();
+```
+
+(Task 15's cull handler calls it too, once `N` is wired to reload the photo list.)
+
 Add these methods:
 
 ```csharp
@@ -2971,6 +3013,8 @@ Add this method alongside `LoadCurrentPhotoAsync`:
 private async Task HandleCullMoveAsync()
 {
     var result = ViewModel.MoveMarkedToSelected();
+    RefreshGridItems(); // Photos was just reassigned — the grid's ItemsSource would otherwise
+                        // still list the photos that just moved into selected/.
     await LoadCurrentPhotoAsync();
 
     string cullMessage = $"Moved {result.MovedFileCount} file(s) to selected/." +
