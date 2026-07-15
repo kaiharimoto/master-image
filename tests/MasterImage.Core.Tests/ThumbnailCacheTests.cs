@@ -134,6 +134,25 @@ public class ThumbnailCacheTests : IDisposable
         Assert.Equal(24, Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg").Length);
     }
 
+    // Many threads generating the SAME uncached item collide on ImageLoader.SaveAsJpeg's
+    // File.Create (FileShare.None) — the losers must swallow the write collision and still return
+    // a decoded bitmap, not throw. This is the cross-entry-point race (on-demand tile load
+    // overlapping an L preload of the same photo).
+    [Fact]
+    public void ConcurrentGenerationOfTheSameItemDoesNotThrow()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        TestImageFactory.WriteTestJpeg(sourcePath, width: 640, height: 480);
+        var item = new PhotoItem("DSC1", new[] { sourcePath });
+        var cache = new ThumbnailCache(_tempDir);
+
+        var exception = Record.Exception(() =>
+            Parallel.For(0, 16, _ => cache.GetOrCreateThumbnail(item, targetPixelWidth: 100)));
+
+        Assert.Null(exception);
+        Assert.Single(Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg"));
+    }
+
     [Fact]
     public void RegeneratesWhenCachedThumbnailFileIsCorrupt()
     {

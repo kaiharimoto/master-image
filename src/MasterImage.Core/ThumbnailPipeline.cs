@@ -29,12 +29,17 @@ public sealed class ThumbnailPipeline
         using var semaphore = new SemaphoreSlim(workerCount);
         int completed = 0;
 
+        // ConfigureAwait(false) throughout: this is a Core library method with no UI work, but the
+        // L handler (Task 15) awaits it from the WPF UI thread. Without it, every continuation
+        // (including the finally's Release) marshals back onto the dispatcher — needless UI-thread
+        // churn during a large preload, and a hard deadlock if any caller ever .Wait()s it from the
+        // UI thread. (Progress<int>.Report is unaffected — it captures its own context separately.)
         var tasks = items.Select(async item =>
         {
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync().ConfigureAwait(false);
             try
             {
-                await Task.Run(() => _cache.GetOrCreateThumbnail(item, _targetPixelWidth));
+                await Task.Run(() => _cache.GetOrCreateThumbnail(item, _targetPixelWidth)).ConfigureAwait(false);
             }
             finally
             {
@@ -43,6 +48,6 @@ public sealed class ThumbnailPipeline
             }
         });
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 }

@@ -62,11 +62,28 @@ public sealed class ThumbnailCache
             return null;
         }
 
-        ImageLoader.SaveAsJpeg(decoded, thumbPath);
-        lock (_manifestLock)
+        // Caching is best-effort and must never throw out of this method — the pipeline (Task 9)
+        // calls it in bulk, so one failed write can't be allowed to abort a whole L preload. Two
+        // realistic failure modes: (a) another thread generating the SAME uncached item at the same
+        // time (on-demand tile load overlapping an L preload) — ImageLoader.SaveAsJpeg opens with
+        // FileShare.None, so the loser's File.Create throws a sharing-violation IOException; (b)
+        // disk full / thumbnail folder momentarily unwritable. In both cases we still return the
+        // decoded bitmap so the caller gets its image; only the disk cache write is skipped, and it
+        // is retried the next time this item is requested.
+        try
         {
-            _manifest.Update(sourcePath, sourceFileName, thumbFileName);
-            _manifest.Save(_manifestPath);
+            ImageLoader.SaveAsJpeg(decoded, thumbPath);
+            lock (_manifestLock)
+            {
+                _manifest.Update(sourcePath, sourceFileName, thumbFileName);
+                _manifest.Save(_manifestPath);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
 
         return decoded;
