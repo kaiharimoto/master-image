@@ -3173,27 +3173,26 @@ git commit -m "Add L full-preload shortcut and fading navigation overlay"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Border Background="#DD000000">
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="420">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="460">
             <TextBlock Text="Shortcuts" FontSize="20" FontWeight="Bold" Foreground="White" Margin="0,0,0,12" />
-            <ItemsControl>
-                <ItemsControl.Items>
-                    <TextBlock Foreground="White" Text="Left / Right — seek previous/next photo" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="Scroll (single view) — zoom in/out" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="Click + drag (zoomed) — pan" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="Shift (hold) — show tile grid overview" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="Shift + scroll (grid open) — adjust tile size" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="L — force full-folder thumbnail preload" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="M — mark/unmark current photo" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="N — move marked photos into selected/" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="F — toggle fullscreen / windowed" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="I — toggle this panel" Margin="0,2" />
-                    <TextBlock Foreground="White" Text="Esc — close panel / exit fullscreen" Margin="0,2" />
-                </ItemsControl.Items>
-            </ItemsControl>
+            <TextBlock Foreground="White" Text="Left / Right — seek previous/next photo" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Scroll (single view) — zoom in/out at cursor" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Click + drag (zoomed) — pan" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Shift (hold) — show tile grid overview" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Shift + scroll (grid open) — adjust tile size" Margin="0,2" />
+            <TextBlock Foreground="White" Text="L — force full-folder thumbnail preload" Margin="0,2" />
+            <TextBlock Foreground="White" Text="M — mark/unmark current photo" Margin="0,2" />
+            <TextBlock Foreground="White" Text="N — move marked photos into selected/" Margin="0,2" />
+            <TextBlock Foreground="White" Text="F — toggle fullscreen / windowed" Margin="0,2" />
+            <TextBlock Foreground="White" Text="I — toggle this panel" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Esc — close panel / exit fullscreen" Margin="0,2" />
+            <TextBlock Foreground="#CCCCCC" Text="Alt+F4 — close Master Image" Margin="0,2" />
         </StackPanel>
     </Border>
 </UserControl>
 ```
+
+Alt+F4 is listed deliberately: the window is borderless with no title bar and `Esc` intentionally never quits (so a stray Esc mid-cull can't lose your session), which leaves no otherwise-discoverable way to exit. The list is a plain `StackPanel` of `TextBlock`s rather than an `ItemsControl` with literal `Items` — same result, one less layer of indirection for what is static text.
 
 - [ ] **Step 2: Create `ShortcutsOverlay.xaml.cs`** (no logic needed beyond the generated partial class)
 
@@ -3214,40 +3213,37 @@ public partial class ShortcutsOverlay : UserControl
 
 - [ ] **Step 3: Wire it into `MainWindow` with the `I` toggle**
 
-Update `MainWindow.xaml` — replace the `ShortcutsOverlayHost` line:
+Bind the host's visibility to the view model rather than assigning `Visibility` by hand. WPF ships `BooleanToVisibilityConverter`, and `MainViewModel` already raises `PropertyChanged` for `IsShortcutsOverlayVisible`, so one binding keeps the two in sync forever — otherwise every place that flips the flag (the `I` toggle, `Esc`) has to remember to also set `Visibility`, and the day one of them forgets, `Esc` clears the flag while the panel stays on screen.
+
+Add the converter to `MainWindow.xaml`'s resources (just inside the `<Window>` tag, before the root `Grid`):
 
 ```xml
-<ContentControl x:Name="ShortcutsOverlayHost" Visibility="Collapsed">
+<Window.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolToVis" />
+</Window.Resources>
+```
+
+and replace the `ShortcutsOverlayHost` line with:
+
+```xml
+<ContentControl x:Name="ShortcutsOverlayHost"
+                Visibility="{Binding IsShortcutsOverlayVisible, Converter={StaticResource BoolToVis}}">
     <local:ShortcutsOverlay />
 </ContentControl>
 ```
 
-Add a binding so the host's visibility follows the view model. Simplest approach without introducing a value converter: toggle the host's `Visibility` directly in code alongside the view model flag. Add the `I` case to `MainWindow_PreviewKeyDown`'s switch:
+(The window's `DataContext` is already the `MainViewModel`, and `OnOpenRequestedFromAnotherProcess` re-assigns it, so the binding re-resolves against the new view model automatically.)
+
+Now the `I` case is just a flag flip — add it to `MainWindow_PreviewKeyDown`'s switch:
 
 ```csharp
 case Key.I:
     ViewModel.IsShortcutsOverlayVisible = !ViewModel.IsShortcutsOverlayVisible;
-    ShortcutsOverlayHost.Visibility = ViewModel.IsShortcutsOverlayVisible ? Visibility.Visible : Visibility.Collapsed;
     e.Handled = true;
     break;
 ```
 
-And update the `Key.Escape` case so closing the overlay via Esc also collapses the host:
-
-```csharp
-case Key.Escape:
-    if (ViewModel.IsShortcutsOverlayVisible)
-    {
-        ViewModel.IsShortcutsOverlayVisible = false;
-        ShortcutsOverlayHost.Visibility = Visibility.Collapsed;
-    }
-    else if (ViewModel.IsFullscreen)
-    {
-        ToggleFullscreen();
-    }
-    e.Handled = true;
-    break;
-```
+The existing `Key.Escape` case already sets `ViewModel.IsShortcutsOverlayVisible = false`, so it now closes the panel with no change needed.
 
 - [ ] **Step 4: Build and manually verify**
 
