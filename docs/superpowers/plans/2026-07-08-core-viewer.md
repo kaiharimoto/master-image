@@ -1519,6 +1519,25 @@ public class ThumbnailCacheTests : IDisposable
         Assert.Equal(24, Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg").Length);
     }
 
+    // Many threads generating the SAME uncached item collide on ImageLoader.SaveAsJpeg's
+    // File.Create (FileShare.None) — the losers must swallow the write collision and still return
+    // a decoded bitmap, not throw. This is the cross-entry-point race (on-demand tile load
+    // overlapping an L preload of the same photo).
+    [Fact]
+    public void ConcurrentGenerationOfTheSameItemDoesNotThrow()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        TestImageFactory.WriteTestJpeg(sourcePath, width: 640, height: 480);
+        var item = new PhotoItem("DSC1", new[] { sourcePath });
+        var cache = new ThumbnailCache(_tempDir);
+
+        var exception = Record.Exception(() =>
+            Parallel.For(0, 16, _ => cache.GetOrCreateThumbnail(item, targetPixelWidth: 100)));
+
+        Assert.Null(exception);
+        Assert.Single(Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg"));
+    }
+
     [Fact]
     public void RegeneratesWhenCachedThumbnailFileIsCorrupt()
     {
@@ -1614,11 +1633,28 @@ public sealed class ThumbnailCache
             return null;
         }
 
-        ImageLoader.SaveAsJpeg(decoded, thumbPath);
-        lock (_manifestLock)
+        // Caching is best-effort and must never throw out of this method — the pipeline (Task 9)
+        // calls it in bulk, so one failed write can't be allowed to abort a whole L preload. Two
+        // realistic failure modes: (a) another thread generating the SAME uncached item at the same
+        // time (on-demand tile load overlapping an L preload) — ImageLoader.SaveAsJpeg opens with
+        // FileShare.None, so the loser's File.Create throws a sharing-violation IOException; (b)
+        // disk full / thumbnail folder momentarily unwritable. In both cases we still return the
+        // decoded bitmap so the caller gets its image; only the disk cache write is skipped, and it
+        // is retried the next time this item is requested.
+        try
         {
-            _manifest.Update(sourcePath, sourceFileName, thumbFileName);
-            _manifest.Save(_manifestPath);
+            ImageLoader.SaveAsJpeg(decoded, thumbPath);
+            lock (_manifestLock)
+            {
+                _manifest.Update(sourcePath, sourceFileName, thumbFileName);
+                _manifest.Save(_manifestPath);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
 
         return decoded;
@@ -1663,7 +1699,7 @@ public sealed class ThumbnailCache
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter ThumbnailCacheTests`
-Expected: `Passed! - Failed: 0, Passed: 8`
+Expected: `Passed! - Failed: 0, Passed: 9`
 
 - [ ] **Step 5: Commit**
 
@@ -1799,12 +1835,17 @@ public sealed class ThumbnailPipeline
         using var semaphore = new SemaphoreSlim(workerCount);
         int completed = 0;
 
+        // ConfigureAwait(false) throughout: this is a Core library method with no UI work, but the
+        // L handler (Task 15) awaits it from the WPF UI thread. Without it, every continuation
+        // (including the finally's Release) marshals back onto the dispatcher — needless UI-thread
+        // churn during a large preload, and a hard deadlock if any caller ever .Wait()s it from the
+        // UI thread. (Progress<int>.Report is unaffected — it captures its own context separately.)
         var tasks = items.Select(async item =>
         {
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync().ConfigureAwait(false);
             try
             {
-                await Task.Run(() => _cache.GetOrCreateThumbnail(item, _targetPixelWidth));
+                await Task.Run(() => _cache.GetOrCreateThumbnail(item, _targetPixelWidth)).ConfigureAwait(false);
             }
             finally
             {
@@ -1813,7 +1854,7 @@ public sealed class ThumbnailPipeline
             }
         });
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 }
 ```
