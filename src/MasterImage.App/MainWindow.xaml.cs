@@ -61,6 +61,49 @@ public partial class MainWindow : Window
 
         var image = await Task.Run(() => Core.ImageLoader.TryLoadAtSize(photo.PrimaryFilePath, decodePixelWidth: 1920));
         SingleImageViewControl.SetImage(image);
+        NavigationOverlayControl.Show(photo, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
+    }
+
+    private async Task HandleCullMoveAsync()
+    {
+        var result = ViewModel.MoveMarkedToSelected();
+        RefreshGridItems(); // Photos was just reassigned — the grid's ItemsSource would otherwise
+                            // still list the photos that just moved into selected/.
+        await LoadCurrentPhotoAsync();
+
+        // Shown last, and only after the await: LoadCurrentPhotoAsync ends by calling
+        // NavigationOverlayControl.Show(...) for the next photo, which would otherwise race with
+        // and overwrite this summary.
+        string cullMessage = $"Moved {result.MovedFileCount} file(s) to selected/." +
+            (result.Failures.Count > 0 ? $" {result.Failures.Count} failed (already existed in selected/)." : "");
+        NavigationOverlayControl.ShowMessage(cullMessage);
+    }
+
+    private async Task HandlePreloadAllAsync()
+    {
+        int total = ViewModel.Photos.Count;
+        if (total == 0)
+        {
+            NavigationOverlayControl.ShowMessage("Nothing to preload — no photos in this folder.");
+            return;
+        }
+
+        // Without a readout, L looks like it does nothing: on a big shoot the work takes tens of
+        // seconds with no other visible effect (thumbnails only surface later, in the grid).
+        NavigationOverlayControl.ShowSticky($"Preloading 0/{total}…");
+
+        // Progress<T> marshals every report onto the UI thread, so on a folder of thousands that's
+        // thousands of callbacks — repaint every 10th (and the last) rather than each one.
+        var progress = new Progress<int>(done =>
+        {
+            if (done % 10 == 0 || done == total)
+            {
+                NavigationOverlayControl.ShowSticky($"Preloading {done}/{total}…");
+            }
+        });
+
+        await ViewModel.PreloadAllAsync(progress);
+        NavigationOverlayControl.ShowMessage($"Preloaded {total} thumbnails.");
     }
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -106,19 +149,20 @@ public partial class MainWindow : Window
 
             case Key.M:
                 ViewModel.ToggleMark();
+                if (ViewModel.CurrentPhoto is not null)
+                {
+                    NavigationOverlayControl.Show(ViewModel.CurrentPhoto, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
+                }
                 e.Handled = true;
                 break;
 
             case Key.N:
-                var result = ViewModel.MoveMarkedToSelected();
-                _ = LoadCurrentPhotoAsync();
-                // The cull rebuilds ViewModel.Photos, and SetItems handed the grid the *old*
-                // list object, so the grid would otherwise still show the just-moved photos.
-                RefreshGridItems();
-                MessageBox.Show(
-                    $"Moved {result.MovedFileCount} file(s) to selected/." +
-                    (result.Failures.Count > 0 ? $"\n{result.Failures.Count} failure(s) — see below:\n{string.Join("\n", result.Failures)}" : ""),
-                    "Master Image");
+                _ = HandleCullMoveAsync();
+                e.Handled = true;
+                break;
+
+            case Key.L:
+                _ = HandlePreloadAllAsync();
                 e.Handled = true;
                 break;
         }

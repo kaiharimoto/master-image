@@ -14,7 +14,9 @@
         <ContentControl x:Name="GridHost" Visibility="Collapsed">
             <local:TileGridView x:Name="TileGridViewControl" />
         </ContentControl>
-        <ContentControl x:Name="NavigationOverlayHost" />
+        <ContentControl x:Name="NavigationOverlayHost">
+            <local:NavigationOverlay x:Name="NavigationOverlayControl" />
+        </ContentControl>
         <ContentControl x:Name="ShortcutsOverlayHost" Visibility="Collapsed" />
     </Grid>
 </Window>
