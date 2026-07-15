@@ -1008,6 +1008,59 @@ public static class TestImageFactory
         using var stream = File.Create(path);
         encoder.Save(stream);
     }
+
+    // Writes a JPEG whose LEFT half is solid black and RIGHT half is solid white (a vertical
+    // split), tagged with the given EXIF orientation. Large solid regions survive JPEG
+    // compression cleanly, so post-rotation a sample pixel's brightness reveals which way the
+    // image actually rotated — enough to tell 90deg (orientation 6) from 270deg (orientation 8),
+    // which a dimensions-only check cannot (both produce the same swapped size).
+    public static void WriteTwoToneJpegWithOrientation(string path, int width, int height, ushort exifOrientation)
+    {
+        var pixels = new byte[width * height * 3];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                byte v = (byte)(x < width / 2 ? 0 : 255);
+                int idx = (y * width + x) * 3;
+                pixels[idx] = v;
+                pixels[idx + 1] = v;
+                pixels[idx + 2] = v;
+            }
+        }
+
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Rgb24, null, pixels, width * 3);
+
+        var metadata = new BitmapMetadata("jpg");
+        metadata.SetQuery("System.Photo.Orientation", exifOrientation);
+
+        var encoder = new JpegBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap, thumbnail: null, metadata: metadata, colorContexts: null));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
+
+    // A PNG carries no System.Photo.Orientation tag, so it exercises ImageLoader's
+    // "metadata present but no orientation key -> normal orientation" fallback branch.
+    public static void WriteTestPng(string path, int width, int height)
+    {
+        var pixels = new byte[width * height * 3];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (byte)(i % 256);
+        }
+
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Rgb24, null, pixels, width * 3);
+
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
 }
 ```
 
@@ -1017,6 +1070,9 @@ public static class TestImageFactory
 // tests/MasterImage.Core.Tests/ImageLoaderTests.cs
 using System;
 using System.IO;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using MasterImage.Core;
 using Xunit;
 
@@ -1108,6 +1164,63 @@ public class ImageLoaderTests : IDisposable
         Assert.NotNull(result);
         Assert.Equal(100, result!.PixelWidth);
         Assert.Equal(60, result.PixelHeight);
+    }
+
+    // Orientation 6 = "rotate 90deg clockwise to display upright." Source has a black LEFT half;
+    // under WPF's 90deg-CW RotateTransform the left edge swings to the TOP, so the top of the
+    // result must be black and the bottom white. Orientation 8 (270deg) is the mirror of this
+    // (black to the BOTTOM). Dimensions alone (both give 60x100) cannot tell 6 from 8 apart —
+    // this pixel check is what actually pins the rotation direction.
+    [Fact]
+    public void Orientation6PutsBlackLeftHalfOnTop()
+    {
+        string path = Path.Combine(_tempDir, "o6.jpg");
+        TestImageFactory.WriteTwoToneJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 6);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(60, result!.PixelWidth);
+        Assert.Equal(100, result.PixelHeight);
+        Assert.True(IsDark(result, x: 30, y: 15));    // black (was left) now on top
+        Assert.False(IsDark(result, x: 30, y: 85));   // white now on bottom
+    }
+
+    [Fact]
+    public void Orientation8PutsBlackLeftHalfOnBottom()
+    {
+        string path = Path.Combine(_tempDir, "o8.jpg");
+        TestImageFactory.WriteTwoToneJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 8);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(60, result!.PixelWidth);
+        Assert.Equal(100, result.PixelHeight);
+        Assert.False(IsDark(result, x: 30, y: 15));   // white now on top
+        Assert.True(IsDark(result, x: 30, y: 85));    // black (was left) now on bottom
+    }
+
+    [Fact]
+    public void PngWithoutOrientationMetadataLoadsUnrotated()
+    {
+        string path = Path.Combine(_tempDir, "no-orientation.png");
+        TestImageFactory.WriteTestPng(path, width: 100, height: 60);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(100, result!.PixelWidth);
+        Assert.Equal(60, result.PixelHeight);
+    }
+
+    private static bool IsDark(BitmapSource image, int x, int y)
+    {
+        var converted = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+        var pixel = new byte[4];
+        converted.CopyPixels(new Int32Rect(x, y, 1, 1), pixel, stride: 4, offset: 0);
+        int brightness = (pixel[0] + pixel[1] + pixel[2]) / 3; // B, G, R
+        return brightness < 128;
     }
 }
 ```
@@ -1247,7 +1360,7 @@ Note: for a 90deg/270deg rotation, the final `PixelWidth`/`PixelHeight` will be 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter ImageLoaderTests`
-Expected: `Passed! - Failed: 0, Passed: 6`
+Expected: `Passed! - Failed: 0, Passed: 9`
 
 - [ ] **Step 6: Commit**
 
