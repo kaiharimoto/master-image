@@ -1,6 +1,8 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using MasterImage.App.ViewModels;
 using MasterImage.Core;
 
@@ -10,6 +12,10 @@ public partial class MainWindow : Window
 {
     private WindowState _preFullscreenState;
     private ResizeMode _preFullscreenResizeMode;
+
+    // Null when fullscreen was entered from a maximised window — there's no explicit size to put
+    // back in that case, restoring WindowState is enough.
+    private Rect? _preFullscreenBounds;
 
     // How far ahead of / behind the current photo to decode in advance. Forward-biased because a
     // cull runs forwards; deep enough that you'd have to sustain roughly a photo every 50ms to
@@ -377,23 +383,123 @@ public partial class MainWindow : Window
 
     private void ToggleFullscreen()
     {
-        if (!ViewModel.IsFullscreen)
+        if (ViewModel.IsFullscreen)
         {
-            _preFullscreenState = WindowState;
-            _preFullscreenResizeMode = ResizeMode;
-
-            ResizeMode = ResizeMode.NoResize;
-            WindowState = WindowState.Normal;
-            WindowState = WindowState.Maximized;
-            Topmost = true;
-            ViewModel.IsFullscreen = true;
+            ExitFullscreen();
         }
         else
         {
-            Topmost = false;
-            WindowState = _preFullscreenState;
-            ResizeMode = _preFullscreenResizeMode;
-            ViewModel.IsFullscreen = false;
+            EnterFullscreen();
         }
+    }
+
+    // Sizes the window to the monitor's *full* bounds rather than maximising it.
+    //
+    // WindowState.Maximized would leave the taskbar showing: because the window opts into
+    // WindowChrome (for real resize edges), it takes part in normal window management, and
+    // maximising then respects the monitor's work area — which excludes the taskbar by definition.
+    // Taking the monitor rect directly and positioning the window over it sidesteps that, and picks
+    // up whichever monitor the window is currently on rather than assuming the primary.
+    private void EnterFullscreen()
+    {
+        if (!TryGetCurrentMonitorBounds(out Rect bounds))
+        {
+            return;
+        }
+
+        _preFullscreenState = WindowState;
+        _preFullscreenResizeMode = ResizeMode;
+        _preFullscreenBounds = WindowState == WindowState.Normal
+            ? new Rect(Left, Top, Width, Height)
+            : null;
+
+        // Bounds only take effect on a non-maximised window.
+        WindowState = WindowState.Normal;
+        ResizeMode = ResizeMode.NoResize;
+
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = bounds.Width;
+        Height = bounds.Height;
+        Topmost = true;
+
+        ViewModel.IsFullscreen = true;
+    }
+
+    private void ExitFullscreen()
+    {
+        Topmost = false;
+        ResizeMode = _preFullscreenResizeMode;
+
+        if (_preFullscreenBounds is Rect previous)
+        {
+            Left = previous.Left;
+            Top = previous.Top;
+            Width = previous.Width;
+            Height = previous.Height;
+        }
+
+        WindowState = _preFullscreenState;
+        ViewModel.IsFullscreen = false;
+    }
+
+    // The monitor this window is on, in WPF's device-independent units. GetMonitorInfo answers in
+    // physical pixels, so on a scaled display (very likely here) the raw numbers would overshoot —
+    // hence dividing through by the visual's device transform.
+    private bool TryGetCurrentMonitorBounds(out Rect bounds)
+    {
+        bounds = default;
+
+        IntPtr monitor = MonitorFromWindow(new WindowInteropHelper(this).Handle, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info))
+        {
+            return false;
+        }
+
+        var transform = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice;
+        double scaleX = transform?.M11 is > 0 ? transform.Value.M11 : 1;
+        double scaleY = transform?.M22 is > 0 ? transform.Value.M22 : 1;
+
+        var screen = info.rcMonitor;
+        bounds = new Rect(
+            screen.Left / scaleX,
+            screen.Top / scaleY,
+            (screen.Right - screen.Left) / scaleX,
+            (screen.Bottom - screen.Top) / scaleY);
+
+        return bounds is { Width: > 0, Height: > 0 };
+    }
+
+    private const uint MonitorDefaultToNearest = 2;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int cbSize;
+        public NativeRect rcMonitor; // whole monitor, taskbar included
+        public NativeRect rcWork;    // work area, taskbar excluded
+        public uint dwFlags;
     }
 }
