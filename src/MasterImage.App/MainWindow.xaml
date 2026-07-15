@@ -1,13 +1,16 @@
 <Window x:Class="MasterImage.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:MasterImage.App.Views"
         Title="Master Image"
         Background="Black"
         WindowStyle="None"
         ResizeMode="CanResizeWithGrip"
         Width="1200" Height="800">
     <Grid x:Name="RootGrid">
-        <ContentControl x:Name="SingleImageHost" />
+        <ContentControl x:Name="SingleImageHost">
+            <local:SingleImageView x:Name="SingleImageViewControl" />
+        </ContentControl>
         <ContentControl x:Name="GridHost" Visibility="Collapsed" />
         <ContentControl x:Name="NavigationOverlayHost" />
         <ContentControl x:Name="ShortcutsOverlayHost" Visibility="Collapsed" />

@@ -19,6 +19,7 @@ public partial class MainWindow : Window
         var (folder, file) = ResolveFolderAndFile(requestedPath);
         ViewModel = new MainViewModel(folder, file);
         DataContext = ViewModel;
+        _ = LoadCurrentPhotoAsync();
 
         App.OpenRequested += OnOpenRequestedFromAnotherProcess;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -44,7 +45,17 @@ public partial class MainWindow : Window
         var (folder, file) = ResolveFolderAndFile(path);
         ViewModel = new MainViewModel(folder, file);
         DataContext = ViewModel;
+        _ = LoadCurrentPhotoAsync();
         Activate();
+    }
+
+    private async Task LoadCurrentPhotoAsync()
+    {
+        var photo = ViewModel.CurrentPhoto;
+        if (photo is null) return;
+
+        var image = await Task.Run(() => Core.ImageLoader.TryLoadAtSize(photo.PrimaryFilePath, decodePixelWidth: 1920));
+        SingleImageViewControl.SetImage(image);
     }
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
