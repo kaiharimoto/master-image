@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MasterImage.Core\MasterImage.Core.csproj" />
+    <ProjectReference Include="..\..\src\MasterImage.App\MasterImage.App.csproj" />
   </ItemGroup>
 
 </Project>
