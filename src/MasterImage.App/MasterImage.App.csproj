@@ -9,6 +9,14 @@
     <PackageReference Include="VirtualizingWrapPanel" Version="2.5.3" />
   </ItemGroup>
 
+  <!-- Stop WPF generating its own entry point. Velopack has to run before WPF starts (on an update
+       or uninstall it does its work and exits without ever showing a window), which means App
+       declares its own Main - and two entry points won't compile. -->
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -20,6 +28,9 @@
     <Version>1.0.0</Version>
     <AssemblyTitle>Master Image</AssemblyTitle>
     <Product>Master Image</Product>
+
+    <!-- Pairs with the ApplicationDefinition removal below: App supplies its own Main. -->
+    <StartupObject>MasterImage.App.App</StartupObject>
   </PropertyGroup>
 
 </Project>
