@@ -1,12 +1,15 @@
-﻿<Window x:Class="MasterImage.App.MainWindow"
+<Window x:Class="MasterImage.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:MasterImage.App"
-        mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
-
+        Title="Master Image"
+        Background="Black"
+        WindowStyle="None"
+        ResizeMode="CanResizeWithGrip"
+        Width="1200" Height="800">
+    <Grid x:Name="RootGrid">
+        <ContentControl x:Name="SingleImageHost" />
+        <ContentControl x:Name="GridHost" Visibility="Collapsed" />
+        <ContentControl x:Name="NavigationOverlayHost" />
+        <ContentControl x:Name="ShortcutsOverlayHost" Visibility="Collapsed" />
     </Grid>
 </Window>
