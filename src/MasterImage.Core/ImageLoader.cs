@@ -24,18 +24,11 @@ public static class ImageLoader
 
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            if (decodePixelWidth > 0)
-            {
-                bitmap.DecodePixelWidth = decodePixelWidth;
-            }
-            bitmap.StreamSource = stream;
-            bitmap.EndInit();
-            bitmap.Freeze();
+            BitmapSource decoded = RawFormats.IsRaw(filePath)
+                ? LoadRawPreview(stream, decodePixelWidth)
+                : LoadStandardImage(stream, decodePixelWidth);
 
-            BitmapSource result = ApplyOrientation(bitmap, orientation);
+            BitmapSource result = ApplyOrientation(decoded, orientation);
             if (!result.IsFrozen)
             {
                 result.Freeze();
@@ -58,6 +51,51 @@ public static class ImageLoader
         {
             return null;
         }
+    }
+
+    private static BitmapSource LoadStandardImage(Stream stream, int decodePixelWidth)
+    {
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        if (decodePixelWidth > 0)
+        {
+            bitmap.DecodePixelWidth = decodePixelWidth;
+        }
+        bitmap.StreamSource = stream;
+        bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    // RAW files carry a full-size JPEG the camera already rendered. Reading that is ~13x cheaper
+    // than demosaicing the sensor data (measured: 285ms vs 3703ms on a 125MB 61MP ARW) and is
+    // indistinguishable for culling, since it's the same rendering the camera would show you.
+    //
+    // BitmapCacheOption.None is load-bearing: OnLoad decodes the whole frame up front and costs
+    // 1.5-3.4s, which throws away the entire benefit. DecodePixelWidth isn't available here (that's
+    // a BitmapImage feature), so the preview is scaled down afterwards instead.
+    private static BitmapSource LoadRawPreview(Stream stream, int decodePixelWidth)
+    {
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.None);
+
+        // Preview is the camera's full-size render; Thumbnail is a small one. Prefer Preview, and
+        // fall back rather than failing outright on a camera that only embeds a thumbnail.
+        BitmapSource source = decoder.Preview
+            ?? decoder.Thumbnail
+            ?? throw new NotSupportedException("RAW file has no embedded preview or thumbnail.");
+
+        if (decodePixelWidth > 0 && source.PixelWidth > decodePixelWidth)
+        {
+            double scale = decodePixelWidth / (double)source.PixelWidth;
+            source = new TransformedBitmap(source, new ScaleTransform(scale, scale));
+        }
+
+        // Copy the pixels out before the stream closes: with CacheOption.None the decoder reads
+        // lazily, and everything above is still just a promise until something realises it.
+        var realised = new WriteableBitmap(new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0));
+        realised.Freeze();
+        return realised;
     }
 
     // EXIF orientation lives in *frame* metadata. BitmapImage.Metadata is NOT usable for this —
