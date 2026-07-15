@@ -3162,6 +3162,8 @@ git commit -m "Add I shortcuts overlay"
 
 **Files:** none (verification only)
 
+**Known/expected behavior, not a bug:** opening any folder creates a hidden `.thumbnails` subfolder in it immediately, even before any thumbnail is generated — including in `My Pictures` when the app is launched with no arguments (it defaults there). This is deliberate: `ThumbnailCache`'s constructor creates *and hides* the folder up front, which is what guarantees it's already hidden before `MarksStore` writes `marks.json` into it. Making creation lazy would let whichever writer got there first create it un-hidden.
+
 - [ ] **Step 1: Run the full test suite**
 
 Run: `dotnet test`
