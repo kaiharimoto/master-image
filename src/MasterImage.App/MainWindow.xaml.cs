@@ -11,10 +11,16 @@ public partial class MainWindow : Window
     private WindowState _preFullscreenState;
     private ResizeMode _preFullscreenResizeMode;
 
-    // Decoded-image cache shared across view models (it's keyed by file path, and reopening a
-    // folder shouldn't throw away work). Sized to comfortably hold the current photo plus the
-    // neighbours we read ahead in both directions.
-    private readonly PhotoImageCache _imageCache = new(capacity: 7, decodePixelWidth: 1920);
+    // How far ahead of / behind the current photo to decode in advance. Forward-biased because a
+    // cull runs forwards; deep enough that you'd have to sustain roughly a photo every 50ms to
+    // outrun it. Cheap to overshoot — the cache dedupes, and anything already decoded costs nothing.
+    private const int ReadAheadForward = 20;
+    private const int ReadAheadBackward = 8;
+
+    // Decoded-image cache shared across view models (keyed by file path, so reopening a folder
+    // keeps its work). Capacity defaults to a share of this machine's RAM — on a well-specced box
+    // that's enough to hold an entire shoot, making every revisit instant.
+    private readonly PhotoImageCache _imageCache = new(decodePixelWidth: 1920);
 
     // Incremented on every load so a slow decode from an abandoned seek can't overwrite the photo
     // the user has since moved to.
@@ -90,19 +96,28 @@ public partial class MainWindow : Window
         PrefetchNeighbours();
     }
 
-    // Decode the photos on either side of the current one ahead of time. Seeking is the most-used
-    // action in a cull and a 40MB camera JPEG takes hundreds of milliseconds to decode, so without
-    // this every keypress stalls on the disk. Ordered nearest-first: the very next photo is the one
-    // most likely to be needed, and the pipeline's worker limit means order decides what lands first.
+    // Decode the photos around the current one ahead of time. Seeking is the most-used action in a
+    // cull and a 40MB camera JPEG takes ~1s to decode, so without this every keypress stalls on the
+    // disk. Issued nearest-first and interleaved forward/back: decodes are slot-limited, so the
+    // order requests go in decides what finishes first, and the next photo matters most.
     private void PrefetchNeighbours()
     {
         var photos = ViewModel.Photos;
         if (photos.Count <= 1) return;
 
-        foreach (int offset in new[] { 1, -1, 2, -2 })
+        foreach (int offset in ReadAheadOffsets())
         {
             int index = ((ViewModel.CurrentIndex + offset) % photos.Count + photos.Count) % photos.Count;
             _imageCache.Prefetch(photos[index]);
+        }
+    }
+
+    private static IEnumerable<int> ReadAheadOffsets()
+    {
+        for (int distance = 1; distance <= Math.Max(ReadAheadForward, ReadAheadBackward); distance++)
+        {
+            if (distance <= ReadAheadForward) yield return distance;
+            if (distance <= ReadAheadBackward) yield return -distance;
         }
     }
 
@@ -145,7 +160,21 @@ public partial class MainWindow : Window
         });
 
         await ViewModel.PreloadAllAsync(progress);
-        NavigationOverlayControl.ShowMessage($"Preloaded {total} thumbnails.");
+
+        // "Preload all the images and generate thumbnails" — the thumbnails above are what the grid
+        // needs; this warms the full-size decodes the single-image view needs, so seeking anywhere
+        // in the folder is instant afterwards rather than only near where you've already been.
+        // Capped at the cache's capacity: queuing more than it can hold would evict the earliest
+        // work before it was ever used, spending a second per photo for nothing.
+        int warmed = 0;
+        foreach (var photo in ViewModel.Photos.Take(_imageCache.Capacity))
+        {
+            _imageCache.Prefetch(photo);
+            warmed++;
+        }
+
+        string cached = warmed < total ? $" {warmed} kept in memory." : " All kept in memory.";
+        NavigationOverlayControl.ShowMessage($"Preloaded {total} thumbnails.{cached}");
     }
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
