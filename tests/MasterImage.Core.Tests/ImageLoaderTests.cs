@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using MasterImage.Core;
 using Xunit;
 
@@ -91,5 +94,62 @@ public class ImageLoaderTests : IDisposable
         Assert.NotNull(result);
         Assert.Equal(100, result!.PixelWidth);
         Assert.Equal(60, result.PixelHeight);
+    }
+
+    // Orientation 6 = "rotate 90deg clockwise to display upright." Source has a black LEFT half;
+    // under WPF's 90deg-CW RotateTransform the left edge swings to the TOP, so the top of the
+    // result must be black and the bottom white. Orientation 8 (270deg) is the mirror of this
+    // (black to the BOTTOM). Dimensions alone (both give 60x100) cannot tell 6 from 8 apart —
+    // this pixel check is what actually pins the rotation direction.
+    [Fact]
+    public void Orientation6PutsBlackLeftHalfOnTop()
+    {
+        string path = Path.Combine(_tempDir, "o6.jpg");
+        TestImageFactory.WriteTwoToneJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 6);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(60, result!.PixelWidth);
+        Assert.Equal(100, result.PixelHeight);
+        Assert.True(IsDark(result, x: 30, y: 15));    // black (was left) now on top
+        Assert.False(IsDark(result, x: 30, y: 85));   // white now on bottom
+    }
+
+    [Fact]
+    public void Orientation8PutsBlackLeftHalfOnBottom()
+    {
+        string path = Path.Combine(_tempDir, "o8.jpg");
+        TestImageFactory.WriteTwoToneJpegWithOrientation(path, width: 100, height: 60, exifOrientation: 8);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(60, result!.PixelWidth);
+        Assert.Equal(100, result.PixelHeight);
+        Assert.False(IsDark(result, x: 30, y: 15));   // white now on top
+        Assert.True(IsDark(result, x: 30, y: 85));    // black (was left) now on bottom
+    }
+
+    [Fact]
+    public void PngWithoutOrientationMetadataLoadsUnrotated()
+    {
+        string path = Path.Combine(_tempDir, "no-orientation.png");
+        TestImageFactory.WriteTestPng(path, width: 100, height: 60);
+
+        var result = ImageLoader.TryLoadFullResolution(path);
+
+        Assert.NotNull(result);
+        Assert.Equal(100, result!.PixelWidth);
+        Assert.Equal(60, result.PixelHeight);
+    }
+
+    private static bool IsDark(BitmapSource image, int x, int y)
+    {
+        var converted = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+        var pixel = new byte[4];
+        converted.CopyPixels(new Int32Rect(x, y, 1, 1), pixel, stride: 4, offset: 0);
+        int brightness = (pixel[0] + pixel[1] + pixel[2]) / 3; // B, G, R
+        return brightness < 128;
     }
 }
