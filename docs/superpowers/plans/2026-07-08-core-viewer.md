@@ -2692,14 +2692,15 @@ git commit -m "Wire Left/Right seek, M mark, and N cull-move shortcuts"
 
 - [ ] **Step 1: Create `TileGridView.xaml`**
 
-`VirtualizingStackPanel` with `IsVirtualizing="True"` and `VirtualizationMode="Recycling"` inside a `WrapPanel`-style `ItemsControl` gives us the "recycle a fixed pool of Image controls" behavior from the spec without hand-writing a custom panel — WPF's virtualization already recycles containers for off-screen items when the `ItemsPanel` supports it and the items host is inside a `ScrollViewer`.
+**Virtualization requires a virtualizing panel — WPF's `WrapPanel` is not one.** `VirtualizingPanel.IsVirtualizing` only takes effect when the `ItemsPanel` derives from `VirtualizingPanel`; a plain `WrapPanel` doesn't, so setting it there silently does nothing and every tile gets realized up front. That breaks spec §7 ("recycles a fixed pool of Image elements... smooth into the thousands of tiles") and, worse, spec §6 — `Tile_Loaded` would fire for *every* photo the moment Shift is pressed, kicking off thumbnail generation for the entire folder instead of just on-screen tiles. WPF ships no virtualizing wrap/grid panel, so we use the `VirtualizingWrapPanel` package (MIT, added via `dotnet add src/MasterImage.App/MasterImage.App.csproj package VirtualizingWrapPanel`), which provides one with proper container recycling.
 
 ```xml
 <!-- src/MasterImage.App/Views/TileGridView.xaml -->
 <UserControl x:Class="MasterImage.App.Views.TileGridView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:core="clr-namespace:MasterImage.Core;assembly=MasterImage.Core">
+             xmlns:core="clr-namespace:MasterImage.Core;assembly=MasterImage.Core"
+             xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel">
     <Border Background="#111111">
         <ListBox x:Name="TileList"
                  Background="Transparent"
@@ -2710,7 +2711,7 @@ git commit -m "Wire Left/Right seek, M mark, and N cull-move shortcuts"
                  SelectionMode="Single">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <WrapPanel IsItemsHost="True" Orientation="Horizontal" />
+                    <vwp:VirtualizingWrapPanel Orientation="Horizontal" />
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
@@ -2739,6 +2740,7 @@ git commit -m "Wire Left/Right seek, M mark, and N cull-move shortcuts"
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using MasterImage.App.ViewModels;
 using MasterImage.Core;
 
@@ -2760,6 +2762,21 @@ public partial class TileGridView : UserControl
     public void SetItems(IReadOnlyList<PhotoItem> items)
     {
         TileList.ItemsSource = items;
+    }
+
+    // Which photo is under the cursor right now, or null if the cursor isn't over a tile.
+    // Used on Shift-release to land on the tile the user was pointing at (spec §7).
+    public PhotoItem? GetHoveredItem()
+    {
+        var hit = VisualTreeHelper.HitTest(TileList, Mouse.GetPosition(TileList));
+        DependencyObject? node = hit?.VisualHit;
+
+        while (node is not null and not ListBoxItem)
+        {
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return (node as ListBoxItem)?.DataContext as PhotoItem;
     }
 
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
@@ -2804,7 +2821,9 @@ public partial class TileGridView : UserControl
 }
 ```
 
-The `Image.Loaded` event fires each time WPF's virtualization brings a container on-screen — including when a recycled container is reused for a different item as you scroll — which is exactly the "generate on-demand for visible tiles only" behavior from spec §6.
+The `Loaded` event fires each time virtualization brings a container on-screen — including when a recycled container is reused for a different item as you scroll — which is exactly the "generate on-demand for visible tiles only" behavior from spec §6. This only holds because the `ItemsPanel` is an actual virtualizing panel (see above); with a plain `WrapPanel` it would fire for every photo at once.
+
+Note `Tile_Loaded` reads `border.Tag` (the `PhotoItem`) rather than closing over a captured item, because with `VirtualizationMode="Recycling"` the same `Border` instance is reused for different photos as you scroll — the `Tag` binding is what keeps it pointing at the item currently being shown.
 
 - [ ] **Step 3: Wire `TileGridView` into `MainWindow` with Shift-hold show/hide**
 
@@ -2841,26 +2860,53 @@ RefreshGridItems();
 Add these methods:
 
 ```csharp
+// Releasing Shift closes the overview and lands on whichever tile the cursor was over
+// (spec §7 press-and-hold); if the cursor wasn't over a tile, stay on the current photo.
 private void MainWindow_PreviewKeyUp(object sender, KeyEventArgs e)
 {
-    if (e.Key is Key.LeftShift or Key.RightShift)
+    if (e.Key is not (Key.LeftShift or Key.RightShift))
     {
-        ViewModel.IsGridVisible = false;
-        GridHost.Visibility = Visibility.Collapsed;
-        SingleImageHost.Visibility = Visibility.Visible;
+        return;
+    }
+
+    var hovered = TileGridViewControl.GetHoveredItem();
+    bool jumped = hovered is not null && TryJumpTo(hovered);
+
+    HideGrid();
+    if (jumped)
+    {
+        _ = LoadCurrentPhotoAsync();
     }
 }
 
 private void OnTileClicked(PhotoItem item)
 {
+    if (!TryJumpTo(item))
+    {
+        return;
+    }
+
+    HideGrid();
+    _ = LoadCurrentPhotoAsync();
+}
+
+private bool TryJumpTo(PhotoItem item)
+{
     int index = ViewModel.Photos.ToList().IndexOf(item);
-    if (index < 0) return;
+    if (index < 0)
+    {
+        return false;
+    }
 
     ViewModel.JumpTo(index);
+    return true;
+}
+
+private void HideGrid()
+{
     ViewModel.IsGridVisible = false;
     GridHost.Visibility = Visibility.Collapsed;
     SingleImageHost.Visibility = Visibility.Visible;
-    _ = LoadCurrentPhotoAsync();
 }
 ```
 

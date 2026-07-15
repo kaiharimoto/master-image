@@ -4,6 +4,10 @@
     <ProjectReference Include="..\MasterImage.Core\MasterImage.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="VirtualizingWrapPanel" Version="2.5.3" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
