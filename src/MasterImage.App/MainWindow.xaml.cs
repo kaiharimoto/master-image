@@ -60,22 +60,51 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.F)
+        switch (e.Key)
         {
-            ToggleFullscreen();
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Escape)
-        {
-            if (ViewModel.IsShortcutsOverlayVisible)
-            {
-                ViewModel.IsShortcutsOverlayVisible = false;
-            }
-            else if (ViewModel.IsFullscreen)
-            {
+            case Key.F:
                 ToggleFullscreen();
-            }
-            e.Handled = true;
+                e.Handled = true;
+                break;
+
+            case Key.Escape:
+                if (ViewModel.IsShortcutsOverlayVisible)
+                {
+                    ViewModel.IsShortcutsOverlayVisible = false;
+                }
+                else if (ViewModel.IsFullscreen)
+                {
+                    ToggleFullscreen();
+                }
+                e.Handled = true;
+                break;
+
+            case Key.Right:
+                ViewModel.SeekNext();
+                _ = LoadCurrentPhotoAsync();
+                e.Handled = true;
+                break;
+
+            case Key.Left:
+                ViewModel.SeekPrevious();
+                _ = LoadCurrentPhotoAsync();
+                e.Handled = true;
+                break;
+
+            case Key.M:
+                ViewModel.ToggleMark();
+                e.Handled = true;
+                break;
+
+            case Key.N:
+                var result = ViewModel.MoveMarkedToSelected();
+                _ = LoadCurrentPhotoAsync();
+                MessageBox.Show(
+                    $"Moved {result.MovedFileCount} file(s) to selected/." +
+                    (result.Failures.Count > 0 ? $"\n{result.Failures.Count} failure(s) — see below:\n{string.Join("\n", result.Failures)}" : ""),
+                    "Master Image");
+                e.Handled = true;
+                break;
         }
     }
 
