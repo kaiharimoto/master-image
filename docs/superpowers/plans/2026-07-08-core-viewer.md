@@ -1382,7 +1382,9 @@ git commit -m "Add WIC-based image loader with size-targeted decode"
 ```csharp
 // tests/MasterImage.Core.Tests/ThumbnailCacheTests.cs
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using MasterImage.Core;
 using Xunit;
 
@@ -1492,6 +1494,51 @@ public class ThumbnailCacheTests : IDisposable
 
         Assert.Single(Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg"));
     }
+
+    // Mirrors how the Task 9 pipeline drives the cache: many background threads calling
+    // GetOrCreateThumbnail on one shared cache instance at once. Without the manifest lock this
+    // faults reproducibly (concurrent manifest.json writes throw a sharing-violation IOException,
+    // and concurrent Dictionary mutation corrupts state) — this test pins the fix.
+    [Fact]
+    public void GeneratesThumbnailsConcurrentlyWithoutError()
+    {
+        var items = new List<PhotoItem>();
+        for (int i = 0; i < 24; i++)
+        {
+            string p = Path.Combine(_tempDir, $"DSC{i}.jpg");
+            TestImageFactory.WriteTestJpeg(p, width: 320, height: 240);
+            items.Add(new PhotoItem($"DSC{i}", new[] { p }));
+        }
+
+        var cache = new ThumbnailCache(_tempDir);
+
+        var exception = Record.Exception(() =>
+            Parallel.ForEach(items, item => cache.GetOrCreateThumbnail(item, targetPixelWidth: 100)));
+
+        Assert.Null(exception);
+        Assert.Equal(24, Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg").Length);
+    }
+
+    [Fact]
+    public void RegeneratesWhenCachedThumbnailFileIsCorrupt()
+    {
+        string sourcePath = Path.Combine(_tempDir, "DSC1.jpg");
+        TestImageFactory.WriteTestJpeg(sourcePath, width: 640, height: 480);
+        var item = new PhotoItem("DSC1", new[] { sourcePath });
+
+        var cache = new ThumbnailCache(_tempDir);
+        cache.GetOrCreateThumbnail(item, targetPixelWidth: 100);
+        string thumbPath = Directory.GetFiles(cache.ThumbnailsFolder, "*.jpg")[0];
+
+        // Corrupt the cached thumbnail as an interrupted write might leave it. The source is
+        // unchanged, so the manifest still considers it "up to date" — the cache must notice the
+        // cached file won't decode and regenerate rather than returning null.
+        File.WriteAllText(thumbPath, "not a jpeg");
+
+        var result = cache.GetOrCreateThumbnail(item, targetPixelWidth: 100);
+
+        Assert.NotNull(result);
+    }
 }
 ```
 
@@ -1513,6 +1560,16 @@ public sealed class ThumbnailCache
     private readonly string _manifestPath;
     private readonly ThumbnailManifest _manifest;
 
+    // The thumbnail pipeline (Task 9) calls GetOrCreateThumbnail from many background threads at
+    // once, and on-demand tile loads can interleave with an L full-folder preload — two
+    // independent concurrent entry points into this one shared cache. The manifest (a plain
+    // Dictionary + non-atomic JSON Save) is not thread-safe, so ALL manifest reads/mutations and
+    // its Save must happen under this lock. The expensive decode is deliberately left OUTSIDE the
+    // lock so thumbnail generation still runs in parallel — only the fast manifest bookkeeping is
+    // serialized. Without this, concurrent Save() calls race on manifest.json (sharing-violation
+    // IOException) and concurrent Dictionary writes corrupt state.
+    private readonly object _manifestLock = new();
+
     public ThumbnailCache(string folderPath)
     {
         ThumbnailsFolder = Path.Combine(folderPath, ".thumbnails");
@@ -1529,12 +1586,26 @@ public sealed class ThumbnailCache
     {
         string sourcePath = item.PrimaryFilePath;
         string sourceFileName = Path.GetFileName(sourcePath);
-        string thumbFileName = _manifest.GetOrAssignThumbnailFileName(sourceFileName);
+
+        string thumbFileName;
+        bool upToDate;
+        lock (_manifestLock)
+        {
+            thumbFileName = _manifest.GetOrAssignThumbnailFileName(sourceFileName);
+            upToDate = _manifest.IsUpToDate(sourcePath, sourceFileName);
+        }
         string thumbPath = Path.Combine(ThumbnailsFolder, thumbFileName);
 
-        if (_manifest.IsUpToDate(sourcePath, sourceFileName) && File.Exists(thumbPath))
+        if (upToDate && File.Exists(thumbPath))
         {
-            return ImageLoader.TryLoadAtSize(thumbPath, targetPixelWidth);
+            var cached = ImageLoader.TryLoadAtSize(thumbPath, targetPixelWidth);
+            if (cached is not null)
+            {
+                return cached;
+            }
+            // Cached file exists but is unreadable (e.g. truncated by an interrupted write) —
+            // fall through and regenerate from source rather than returning null forever, since
+            // IsUpToDate stays true and would never otherwise self-heal.
         }
 
         var decoded = ImageLoader.TryLoadAtSize(sourcePath, targetPixelWidth);
@@ -1544,8 +1615,11 @@ public sealed class ThumbnailCache
         }
 
         ImageLoader.SaveAsJpeg(decoded, thumbPath);
-        _manifest.Update(sourcePath, sourceFileName, thumbFileName);
-        _manifest.Save(_manifestPath);
+        lock (_manifestLock)
+        {
+            _manifest.Update(sourcePath, sourceFileName, thumbFileName);
+            _manifest.Save(_manifestPath);
+        }
 
         return decoded;
     }
@@ -1553,15 +1627,33 @@ public sealed class ThumbnailCache
     public void PruneOrphans(IReadOnlyList<PhotoItem> currentItems)
     {
         var existingNames = currentItems.Select(i => Path.GetFileName(i.PrimaryFilePath)).ToHashSet();
-        var orphanedThumbnailFileNames = _manifest.PruneMissing(existingNames);
-        _manifest.Save(_manifestPath);
+
+        IReadOnlyList<string> orphanedThumbnailFileNames;
+        lock (_manifestLock)
+        {
+            orphanedThumbnailFileNames = _manifest.PruneMissing(existingNames);
+            _manifest.Save(_manifestPath);
+        }
 
         foreach (var thumbnailFileName in orphanedThumbnailFileNames)
         {
             string orphanPath = Path.Combine(ThumbnailsFolder, thumbnailFileName);
-            if (File.Exists(orphanPath))
+            try
             {
-                File.Delete(orphanPath);
+                if (File.Exists(orphanPath))
+                {
+                    File.Delete(orphanPath);
+                }
+            }
+            catch (IOException)
+            {
+                // Thumbnail file is locked (e.g. still held open by the grid, or by Explorer's
+                // thumbnail handler) — skip it rather than aborting the whole prune. Consistent
+                // with the file-op error handling in ImageLoader and CullOperations.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Read-only / permission denied — skip, same rationale.
             }
         }
     }
@@ -1571,7 +1663,7 @@ public sealed class ThumbnailCache
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `dotnet test tests/MasterImage.Core.Tests --filter ThumbnailCacheTests`
-Expected: `Passed! - Failed: 0, Passed: 6`
+Expected: `Passed! - Failed: 0, Passed: 8`
 
 - [ ] **Step 5: Commit**
 
@@ -1683,7 +1775,14 @@ public sealed class ThumbnailPipeline
     private readonly ThumbnailCache _cache;
     private readonly int _targetPixelWidth;
 
-    public ThumbnailPipeline(ThumbnailCache cache, int targetPixelWidth = 400)
+    // 512 comfortably exceeds the max grid tile size (MainViewModel clamps TileSize to 480), so a
+    // cached thumbnail is always at least as large as any tile it's displayed in — the grid
+    // downscales, never upscales. This sidesteps a known ThumbnailCache limitation: the cache
+    // reuses a thumbnail whenever the source is unchanged, without checking the cached pixel
+    // width, so if we generated smaller than the largest tile, Shift+scroll-enlarged tiles (Task
+    // 14) would show a blurry upscaled thumbnail. Single-image view does NOT use this pipeline
+    // (it calls ImageLoader.TryLoadAtSize directly at ~1920), so 512 only needs to cover the grid.
+    public ThumbnailPipeline(ThumbnailCache cache, int targetPixelWidth = 512)
     {
         _cache = cache;
         _targetPixelWidth = targetPixelWidth;
