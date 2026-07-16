@@ -23,6 +23,7 @@ been allowed to seize defaults silently since Windows 8.
 | Key | Action |
 |---|---|
 | `←` / `→` | Previous / next photo |
+| `↑` / `↓` | The same as `←` / `→` |
 | Scroll | Zoom in/out at the cursor |
 | Drag | Pan (when zoomed) / move the window (when not) |
 | Double-click | Maximise / restore |
@@ -31,13 +32,26 @@ been allowed to seize defaults silently since Windows 8.
 | Arrows (in grid) | Browse tiles |
 | `Enter` / click | Open the selected tile |
 | `1` / `2` / `3` | Smaller / bigger / default tile size |
+| `J` | Compare two photos side by side |
+| `K` | Switch which pane the arrows drive |
+| `H` | Zoom both panes together / separately |
 | `M` | Mark / unmark |
 | `N` | Move marked photos into `selected/` |
 | `L` | Preload the folder for instant seeking |
 | `I` | Show all shortcuts |
 | `U` | Check for updates |
-| `Esc` | Close panel / close grid / exit fullscreen |
-| `Alt+F4` | Quit |
+| `Esc` | Exit fullscreen / compare |
+| `Esc` ×3, or `Alt+F4` | Quit |
+
+## Comparing
+
+`J` splits the view in two, with the photo you were on in both panes. The arrows drive whichever pane
+is active (it has a blue border); `K` switches which one that is. So you pin a reference on one side
+and flip through candidates on the other.
+
+`H` toggles zoom lock. Locked (the default), zooming or paning either pane does the same to the
+other — which is the point when you're checking two frames of the same shot for focus. Panes keep
+their zoom as you seek, so you can zoom to 100% once and then browse.
 
 ## Why it's fast
 
