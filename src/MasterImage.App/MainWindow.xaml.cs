@@ -130,6 +130,50 @@ public partial class MainWindow : Window
         NavigationOverlayControl.Show(photo, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
 
         PrefetchNeighbours();
+        _ = RefreshPeekAsync(generation);
+    }
+
+    // The P peek. Takes the load generation of the seek that asked for it: thumbnails resolve
+    // asynchronously, so without this a slow thumbnail from a photo you've already moved past could
+    // land in the corner after the fact — the same race the main image uses the generation to avoid.
+    private async Task RefreshPeekAsync(int generation)
+    {
+        if (!ShouldDrawPeek())
+        {
+            PeekOverlayControl.Clear();
+            return;
+        }
+
+        var neighbours = ViewModel.GetNeighbours();
+        if (neighbours.Previous is null || neighbours.Next is null)
+        {
+            PeekOverlayControl.Clear();
+            return;
+        }
+
+        var previous = await ViewModel.GetThumbnailAsync(neighbours.Previous);
+        var next = await ViewModel.GetThumbnailAsync(neighbours.Next);
+
+        if (generation != _loadGeneration || !ShouldDrawPeek()) return;
+
+        PeekOverlayControl.Show(previous, next);
+    }
+
+    // P is on, and nothing that supersedes it is up. The grid is nothing but neighbours, and
+    // compare is already showing two photos — a peek in either would be noise.
+    private bool ShouldDrawPeek() =>
+        ViewModel.IsPeekEnabled && !ViewModel.IsGridVisible && _compareState is null;
+
+    private void TogglePeek()
+    {
+        ViewModel.IsPeekEnabled = !ViewModel.IsPeekEnabled;
+        _ = RefreshPeekAsync(_loadGeneration);
+
+        // Says so out loud when it can't be shown, rather than looking like a dead key.
+        if (ViewModel.IsPeekEnabled && !ShouldDrawPeek())
+        {
+            NavigationOverlayControl.ShowMessage("Peek is on — it shows in the single-photo view.");
+        }
     }
 
     // A RAW that won't open on a machine with no RAW codec is the one failure with a fix the user
@@ -207,6 +251,7 @@ public partial class MainWindow : Window
         CompareHost.Visibility = Visibility.Visible;
         SingleImageHost.Visibility = Visibility.Collapsed;
         CompareViewControl.SetActivePane(_compareState.ActivePane);
+        PeekOverlayControl.Clear();
 
         // Both panes open at fit-to-window regardless of how the single view was zoomed — the
         // split halves the width, so the previous framing would be wrong for both panes anyway.
@@ -539,6 +584,11 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
 
+            case Key.P:
+                TogglePeek();
+                e.Handled = true;
+                break;
+
             case Key.I:
                 ViewModel.IsShortcutsOverlayVisible = !ViewModel.IsShortcutsOverlayVisible;
                 e.Handled = true;
@@ -566,6 +616,7 @@ public partial class MainWindow : Window
         GridHost.Visibility = Visibility.Visible;
         SingleImageHost.Visibility = Visibility.Collapsed;
         CompareHost.Visibility = Visibility.Collapsed;
+        PeekOverlayControl.Clear();
 
         // Start browsing from where you already are, and hand the grid keyboard focus so the
         // arrow keys drive it rather than seeking the single-image view behind it.
@@ -581,6 +632,8 @@ public partial class MainWindow : Window
         CompareHost.Visibility = _compareState is not null ? Visibility.Visible : Visibility.Collapsed;
         SingleImageHost.Visibility = _compareState is not null ? Visibility.Collapsed : Visibility.Visible;
         Focus();
+
+        _ = RefreshPeekAsync(_loadGeneration);
     }
 
     // "The photo you're looking at" — the active pane's in compare mode, otherwise the current one.

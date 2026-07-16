@@ -6,6 +6,8 @@ using MasterImage.Core;
 
 namespace MasterImage.App.ViewModels;
 
+public sealed record PhotoNeighbours(PhotoItem? Previous, PhotoItem? Next);
+
 public sealed class MainViewModel : INotifyPropertyChanged
 {
     private readonly MarksStore _marksStore;
@@ -17,6 +19,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _isGridVisible;
     private bool _isFullscreen;
     private bool _isCompareVisible;
+    private bool _isPeekEnabled;
     private bool _isShortcutsOverlayVisible;
     private double _tileSize = 200;
 
@@ -74,6 +77,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { _isCompareVisible = value; OnPropertyChanged(); }
     }
 
+    // Whether P is switched on. Whether the peek is actually *drawn* is a separate question — the
+    // grid and compare mode both suppress it without clearing this, so leaving them restores it.
+    public bool IsPeekEnabled
+    {
+        get => _isPeekEnabled;
+        set { _isPeekEnabled = value; OnPropertyChanged(); }
+    }
+
     public bool IsShortcutsOverlayVisible
     {
         get => _isShortcutsOverlayVisible;
@@ -91,6 +102,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         get => _tileSize;
         set { _tileSize = Math.Clamp(value, MinTileSize, MaxTileSize); OnPropertyChanged(); }
+    }
+
+    // The photos either side of the current one, for the P peek.
+    //
+    // Wraps exactly as SeekPrevious/SeekNext below do, and for the same reason they do: the peek
+    // showing something other than where the arrow key actually lands would be worse than no peek.
+    // Null when there aren't two distinct photos to point at — with one photo both sides would be
+    // the photo already on screen.
+    public PhotoNeighbours GetNeighbours()
+    {
+        if (_photos.Count < 2) return new PhotoNeighbours(null, null);
+
+        return new PhotoNeighbours(
+            _photos[(_currentIndex - 1 + _photos.Count) % _photos.Count],
+            _photos[(_currentIndex + 1) % _photos.Count]);
     }
 
     public void SeekNext()

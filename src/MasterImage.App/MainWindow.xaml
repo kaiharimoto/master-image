@@ -32,6 +32,11 @@
         <ContentControl x:Name="GridHost" Visibility="Collapsed">
             <local:TileGridView x:Name="TileGridViewControl" />
         </ContentControl>
+        <!-- Below NavigationOverlayHost on purpose: the two share the bottom-left corner, and the
+             filename chip is the one that should win while it's visible. -->
+        <ContentControl x:Name="PeekOverlayHost">
+            <local:PeekOverlay x:Name="PeekOverlayControl" />
+        </ContentControl>
         <ContentControl x:Name="NavigationOverlayHost">
             <local:NavigationOverlay x:Name="NavigationOverlayControl" />
         </ContentControl>

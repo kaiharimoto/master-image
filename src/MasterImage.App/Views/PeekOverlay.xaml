@@ -1,0 +1,28 @@
+<UserControl x:Class="MasterImage.App.Views.PeekOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsHitTestVisible="False">
+    <!-- IsHitTestVisible="False" is not just because the peek is informational: at fit-to-window a
+         left-drag anywhere on the photo means "move the window" (there's no title bar), so a
+         hit-testable overlay sitting over the photo would silently eat that gesture in two corners. -->
+    <Grid Margin="16">
+        <!-- The filename chip owns this same corner and draws on top for its first 1.2s after a
+             seek. That's deliberate: it clears the moment you stop moving, which is when the peek
+             is worth reading. -->
+        <Border x:Name="PreviousPanel"
+                VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                Width="150" Visibility="Collapsed"
+                BorderBrush="#55FFFFFF" BorderThickness="1" Background="#66000000">
+            <Image x:Name="PreviousImage" Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality" />
+        </Border>
+
+        <Border x:Name="NextPanel"
+                VerticalAlignment="Bottom" HorizontalAlignment="Right"
+                Width="150" Visibility="Collapsed"
+                BorderBrush="#55FFFFFF" BorderThickness="1" Background="#66000000">
+            <Image x:Name="NextImage" Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality" />
+        </Border>
+    </Grid>
+</UserControl>
