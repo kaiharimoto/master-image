@@ -28,13 +28,21 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 
     Write-Host "Packaging $Version..." -ForegroundColor Cyan
+
+    # --icon is separate from the exe's own embedded icon: it's what the installer, the Start Menu
+    # shortcut and the Add/Remove Programs entry use. Without it those show a default icon even
+    # though the exe itself looks right.
+    $icon = Join-Path $root 'src\MasterImage.App\appicon.ico'
+    if (-not (Test-Path $icon)) { throw "Icon not found at $icon - run scripts\generate-icon.ps1" }
+
     vpk pack `
         --packId MasterImage `
         --packVersion $Version `
         --packDir $publish `
         --mainExe MasterImage.App.exe `
         --packTitle 'Master Image' `
-        --packAuthors 'KAIHARI'
+        --packAuthors 'KAIHARI' `
+        --icon $icon
     if ($LASTEXITCODE -ne 0) { throw 'vpk pack failed' }
 
     Write-Host ''

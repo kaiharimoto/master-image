@@ -37,6 +37,12 @@ public partial class MainWindow : Window
 
     private readonly AppUpdater _updater = new();
 
+    // Non-null exactly while compare mode is up; it owns the two pane indices and which one the
+    // arrows drive. ViewModel.IsCompareVisible mirrors it for the rest of the window to read.
+    private CompareState? _compareState;
+
+    private readonly EscapeQuitCounter _escapeCounter = new();
+
     // Set once an update has been found and announced, so the second U installs rather than
     // re-checking. Deliberate: a stray U mid-cull must not be able to restart the app.
     private bool _updateOffered;
@@ -80,6 +86,13 @@ public partial class MainWindow : Window
         var (folder, file) = ResolveFolderAndFile(path);
         ViewModel = new MainViewModel(folder, file);
         DataContext = ViewModel;
+
+        // The panes were indexing into the old folder's photo list, which no longer exists. Being
+        // asked to open a specific file also means showing that file, not a stale side-by-side.
+        _compareState = null;
+        CompareHost.Visibility = Visibility.Collapsed;
+        SingleImageHost.Visibility = Visibility.Visible;
+
         _ = LoadCurrentPhotoAsync();
         Activate();
         RefreshGridItems();
@@ -137,14 +150,17 @@ public partial class MainWindow : Window
     // cull and a 40MB camera JPEG takes ~1s to decode, so without this every keypress stalls on the
     // disk. Issued nearest-first and interleaved forward/back: decodes are slot-limited, so the
     // order requests go in decides what finishes first, and the next photo matters most.
-    private void PrefetchNeighbours()
+    private void PrefetchNeighbours() => PrefetchAround(ViewModel.CurrentIndex);
+
+    // Takes the centre explicitly: compare mode seeks its own pane indices, not ViewModel.CurrentIndex.
+    private void PrefetchAround(int centreIndex)
     {
         var photos = ViewModel.Photos;
         if (photos.Count <= 1) return;
 
         foreach (int offset in ReadAheadOffsets())
         {
-            int index = ((ViewModel.CurrentIndex + offset) % photos.Count + photos.Count) % photos.Count;
+            int index = ((centreIndex + offset) % photos.Count + photos.Count) % photos.Count;
             _imageCache.Prefetch(photos[index]);
         }
     }
@@ -158,12 +174,188 @@ public partial class MainWindow : Window
         }
     }
 
+    // Up/Down are Left/Right — the folder is a single sequence however you ask for the next photo.
+    private void SeekActiveView(bool forward)
+    {
+        if (_compareState is not null)
+        {
+            if (forward) _compareState.SeekNext(); else _compareState.SeekPrevious();
+            _ = LoadComparePanesAsync(_compareState.ActivePane);
+            return;
+        }
+
+        if (forward) ViewModel.SeekNext(); else ViewModel.SeekPrevious();
+        _ = LoadCurrentPhotoAsync();
+    }
+
+    private async Task ToggleCompareAsync()
+    {
+        if (_compareState is not null)
+        {
+            await ExitCompareAsync();
+            return;
+        }
+
+        if (ViewModel.Photos.Count == 0)
+        {
+            NavigationOverlayControl.ShowMessage("Nothing to compare — no photos in this folder.");
+            return;
+        }
+
+        _compareState = new CompareState(ViewModel.Photos.Count, ViewModel.CurrentIndex);
+        ViewModel.IsCompareVisible = true;
+        CompareHost.Visibility = Visibility.Visible;
+        SingleImageHost.Visibility = Visibility.Collapsed;
+        CompareViewControl.SetActivePane(_compareState.ActivePane);
+
+        // Both panes open at fit-to-window regardless of how the single view was zoomed — the
+        // split halves the width, so the previous framing would be wrong for both panes anyway.
+        CompareViewControl.ResetZoom();
+
+        await LoadComparePanesAsync(ComparePane.Left, ComparePane.Right);
+    }
+
+    private async Task ExitCompareAsync()
+    {
+        // Land on whichever photo the active pane was showing: browsing in compare and then
+        // leaving should deposit you where you were looking, not where you started.
+        if (_compareState is not null)
+        {
+            ViewModel.JumpTo(_compareState.ActiveIndex);
+        }
+
+        _compareState = null;
+        ViewModel.IsCompareVisible = false;
+        CompareHost.Visibility = Visibility.Collapsed;
+
+        // The grid may be up over compare mode; leave it owning the screen if so.
+        if (!ViewModel.IsGridVisible)
+        {
+            SingleImageHost.Visibility = Visibility.Visible;
+        }
+
+        await LoadCurrentPhotoAsync();
+    }
+
+    private void SwitchComparePane()
+    {
+        if (_compareState is null) return;
+
+        _compareState.SwitchPane();
+        CompareViewControl.SetActivePane(_compareState.ActivePane);
+        ShowCompareOverlay();
+    }
+
+    private void ToggleZoomLock()
+    {
+        if (_compareState is null) return;
+
+        bool locked = !CompareViewControl.IsZoomLocked;
+        CompareViewControl.SetZoomLocked(locked, _compareState.ActivePane);
+        NavigationOverlayControl.ShowMessage(locked
+            ? "Zoom locked — both panes move together"
+            : "Zoom unlocked — each pane moves on its own");
+    }
+
+    // Loads the named panes under a single load generation, so a seek part-way through abandons
+    // the whole batch rather than leaving one pane showing the photo you've already moved off.
+    private async Task LoadComparePanesAsync(params ComparePane[] panes)
+    {
+        if (_compareState is null) return;
+
+        var photos = ViewModel.Photos;
+        if (photos.Count == 0)
+        {
+            CompareViewControl.SetPaneImage(ComparePane.Left, null);
+            CompareViewControl.SetPaneImage(ComparePane.Right, null);
+            return;
+        }
+
+        int generation = ++_loadGeneration;
+
+        foreach (var pane in panes)
+        {
+            var photo = photos[pane == ComparePane.Left ? _compareState.LeftIndex : _compareState.RightIndex];
+
+            var decode = _imageCache.GetAsync(photo);
+            var image = decode.IsCompletedSuccessfully ? decode.Result : await decode;
+
+            if (generation != _loadGeneration || _compareState is null) return;
+
+            CompareViewControl.SetPaneImage(pane, image);
+
+            if (image is null)
+            {
+                NavigationOverlayControl.ShowMessage(DescribeLoadFailure(photo));
+                return;
+            }
+        }
+
+        ShowCompareOverlay();
+        PrefetchAround(_compareState.ActiveIndex);
+    }
+
+    // The overlay reports the active pane's photo — the pane border says which side that is.
+    private void ShowCompareOverlay()
+    {
+        if (_compareState is null) return;
+
+        var photo = ViewModel.Photos.ElementAtOrDefault(_compareState.ActiveIndex);
+        if (photo is null) return;
+
+        NavigationOverlayControl.Show(
+            photo, _compareState.ActiveIndex, ViewModel.Photos.Count, ViewModel.IsMarked(photo));
+    }
+
+    // Escape is no longer a back button — Shift, I, F and J each own their own mode. It keeps only
+    // the two exits where Esc is a strong enough OS convention to be worth the redundancy, and
+    // every press counts towards the quit, including those two.
+    private async Task HandleEscapeAsync()
+    {
+        if (_compareState is not null)
+        {
+            await ExitCompareAsync();
+        }
+        else if (ViewModel.IsFullscreen)
+        {
+            ToggleFullscreen();
+        }
+
+        if (_escapeCounter.RegisterPress(DateTime.UtcNow))
+        {
+            Close();
+            return;
+        }
+
+        // Shown after the await, so the photo reload that exiting compare kicks off can't overwrite
+        // it — the same ordering LoadCurrentPhotoAsync forces on HandleCullMoveAsync.
+        NavigationOverlayControl.ShowMessage(DescribeQuitProgress(_escapeCounter.PressesRemaining));
+    }
+
+    // Nothing else in the app hints that Escape accumulates, so the gesture has to announce itself.
+    private static string DescribeQuitProgress(int remaining) => remaining switch
+    {
+        1 => "Press Esc once more to quit",
+        2 => "Press Esc twice more to quit",
+        _ => $"Press Esc {remaining} more times to quit",
+    };
+
     private async Task HandleCullMoveAsync()
     {
         var result = ViewModel.MoveMarkedToSelected();
         RefreshGridItems(); // Photos was just reassigned — the grid's ItemsSource would otherwise
                             // still list the photos that just moved into selected/.
-        await LoadCurrentPhotoAsync();
+
+        if (_compareState is not null)
+        {
+            // The folder just shrank; both panes could be pointing past the end of it.
+            _compareState.ClampTo(ViewModel.Photos.Count);
+            await LoadComparePanesAsync(ComparePane.Left, ComparePane.Right);
+        }
+        else
+        {
+            await LoadCurrentPhotoAsync();
+        }
 
         // Shown last, and only after the await: LoadCurrentPhotoAsync ends by calling
         // NavigationOverlayControl.Show(...) for the next photo, which would otherwise race with
@@ -241,6 +433,13 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Any other key means you're still working, so the quit gesture starts over. Done before
+        // the grid's early-return below, so browsing the grid resets it too.
+        if (e.Key != Key.Escape)
+        {
+            _escapeCounter.Reset();
+        }
+
         // The grid owns the arrow keys while it's open so you can browse it — the ListBox works out
         // up/down across wrapped rows itself. Everything else below behaves the same in both modes.
         if (ViewModel.IsGridVisible && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
@@ -256,30 +455,34 @@ public partial class MainWindow : Window
                 break;
 
             case Key.Escape:
-                if (ViewModel.IsShortcutsOverlayVisible)
-                {
-                    ViewModel.IsShortcutsOverlayVisible = false;
-                }
-                else if (ViewModel.IsGridVisible)
-                {
-                    HideGrid();
-                }
-                else if (ViewModel.IsFullscreen)
-                {
-                    ToggleFullscreen();
-                }
+                _ = HandleEscapeAsync();
                 e.Handled = true;
                 break;
 
             case Key.Right:
-                ViewModel.SeekNext();
-                _ = LoadCurrentPhotoAsync();
+            case Key.Down:
+                SeekActiveView(forward: true);
                 e.Handled = true;
                 break;
 
             case Key.Left:
-                ViewModel.SeekPrevious();
-                _ = LoadCurrentPhotoAsync();
+            case Key.Up:
+                SeekActiveView(forward: false);
+                e.Handled = true;
+                break;
+
+            case Key.J:
+                _ = ToggleCompareAsync();
+                e.Handled = true;
+                break;
+
+            case Key.K:
+                SwitchComparePane();
+                e.Handled = true;
+                break;
+
+            case Key.H:
+                ToggleZoomLock();
                 e.Handled = true;
                 break;
 
@@ -362,37 +565,58 @@ public partial class MainWindow : Window
         ViewModel.IsGridVisible = true;
         GridHost.Visibility = Visibility.Visible;
         SingleImageHost.Visibility = Visibility.Collapsed;
+        CompareHost.Visibility = Visibility.Collapsed;
 
         // Start browsing from where you already are, and hand the grid keyboard focus so the
         // arrow keys drive it rather than seeking the single-image view behind it.
-        TileGridViewControl.SelectAndFocus(ViewModel.CurrentPhoto);
+        TileGridViewControl.SelectAndFocus(BrowsedPhoto);
     }
 
     private void HideGrid()
     {
         ViewModel.IsGridVisible = false;
         GridHost.Visibility = Visibility.Collapsed;
-        SingleImageHost.Visibility = Visibility.Visible;
+
+        // Back to whichever view the grid was opened over.
+        CompareHost.Visibility = _compareState is not null ? Visibility.Visible : Visibility.Collapsed;
+        SingleImageHost.Visibility = _compareState is not null ? Visibility.Collapsed : Visibility.Visible;
         Focus();
     }
+
+    // "The photo you're looking at" — the active pane's in compare mode, otherwise the current one.
+    // ViewModel.CurrentIndex is stale while compare is up: compare tracks its own two indices and
+    // only writes one back on exit.
+    private PhotoItem? BrowsedPhoto => _compareState is not null
+        ? ViewModel.Photos.ElementAtOrDefault(_compareState.ActiveIndex)
+        : ViewModel.CurrentPhoto;
 
     private void OnTileClicked(PhotoItem item) => OpenTile(item);
 
     // Leave the grid on a specific photo — from a click or from Enter on the browsed selection.
     private void OpenTile(PhotoItem? item)
     {
-        if (item is null || !TryJumpTo(item))
+        if (item is null) return;
+
+        int index = ViewModel.Photos.ToList().IndexOf(item);
+        if (index < 0) return;
+
+        // Opened over compare mode, the tile fills the pane you were browsing.
+        if (_compareState is not null)
         {
+            _compareState.JumpActiveTo(index);
+            HideGrid();
+            _ = LoadComparePanesAsync(_compareState.ActivePane);
             return;
         }
 
+        ViewModel.JumpTo(index);
         HideGrid();
         _ = LoadCurrentPhotoAsync();
     }
 
-    // M means "mark what I'm looking at": the browsed tile when the grid is open, otherwise the
-    // photo on screen. Without this distinction, marking from the grid would silently mark
-    // whatever the single-image view happened to be showing behind it.
+    // M means "mark what I'm looking at": the browsed tile when the grid is open, the active pane's
+    // photo in compare mode, otherwise the photo on screen. Without this distinction, marking from
+    // the grid would silently mark whatever the single-image view happened to be showing behind it.
     private void MarkActivePhoto()
     {
         if (ViewModel.IsGridVisible)
@@ -405,23 +629,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_compareState is not null)
+        {
+            var browsed = BrowsedPhoto;
+            if (browsed is null) return;
+
+            ViewModel.ToggleMark(browsed);
+            ShowCompareOverlay();
+            return;
+        }
+
         ViewModel.ToggleMark();
         if (ViewModel.CurrentPhoto is not null)
         {
             NavigationOverlayControl.Show(ViewModel.CurrentPhoto, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
         }
-    }
-
-    private bool TryJumpTo(PhotoItem item)
-    {
-        int index = ViewModel.Photos.ToList().IndexOf(item);
-        if (index < 0)
-        {
-            return false;
-        }
-
-        ViewModel.JumpTo(index);
-        return true;
     }
 
     private void OnWindowDragRequested(object? sender, EventArgs e)

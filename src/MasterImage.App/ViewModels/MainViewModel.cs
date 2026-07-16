@@ -16,6 +16,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private int _currentIndex;
     private bool _isGridVisible;
     private bool _isFullscreen;
+    private bool _isCompareVisible;
     private bool _isShortcutsOverlayVisible;
     private double _tileSize = 200;
 
@@ -65,6 +66,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         get => _isFullscreen;
         set { _isFullscreen = value; OnPropertyChanged(); }
+    }
+
+    public bool IsCompareVisible
+    {
+        get => _isCompareVisible;
+        set { _isCompareVisible = value; OnPropertyChanged(); }
     }
 
     public bool IsShortcutsOverlayVisible

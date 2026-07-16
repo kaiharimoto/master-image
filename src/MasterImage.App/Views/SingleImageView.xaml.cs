@@ -22,6 +22,24 @@ public partial class SingleImageView : UserControl
     // Raised on double-click, for maximise/restore — the other thing a title bar would have given us.
     public event EventHandler? MaximiseToggleRequested;
 
+    // Raised whenever zoom or pan changes, so compare mode can mirror one pane onto the other.
+    public event EventHandler? TransformChanged;
+
+    // False for compare-mode panes. Dragging one half of a split to move the whole window (or
+    // double-clicking it to maximise) makes the two panes feel like separate windows rather than
+    // one view — and unlike single-image view, a pane has no title bar to miss.
+    public bool AllowWindowGestures { get; set; } = true;
+
+    // The pane's zoom/pan, as a matrix in the pane's own coordinate space. Assigning it is how
+    // compare mode mirrors one pane onto the other while zoom is locked; because both panes are
+    // the same size and both use Stretch="Uniform", copying the matrix mirrors *relative* framing
+    // even when the two photos have different dimensions.
+    public Matrix Transform
+    {
+        get => ImageTransform.Matrix;
+        set => SetTransform(value);
+    }
+
     public SingleImageView()
     {
         InitializeComponent();
@@ -31,13 +49,30 @@ public partial class SingleImageView : UserControl
         MouseLeftButtonUp += OnMouseLeftButtonUp;
     }
 
-    public void SetImage(BitmapSource? image)
+    // resetZoom: false keeps the current framing across a photo swap. Compare mode wants that —
+    // zooming both panes to 100% and then flipping through candidates against a fixed reference is
+    // the whole point of the split, and re-zooming after every seek would defeat it.
+    public void SetImage(BitmapSource? image, bool resetZoom = true)
     {
         PhotoImage.Source = image;
-        ResetZoom();
+        if (resetZoom)
+        {
+            ResetZoom();
+        }
     }
 
-    public void ResetZoom() => ImageTransform.Matrix = Matrix.Identity;
+    public void ResetZoom() => SetTransform(Matrix.Identity);
+
+    // The single funnel for every zoom and pan. Everything goes through here so TransformChanged
+    // can't miss a change — and the equality guard means a mirrored assignment that changes
+    // nothing raises nothing, which is what stops two locked panes echoing each other forever.
+    private void SetTransform(Matrix matrix)
+    {
+        if (ImageTransform.Matrix == matrix) return;
+
+        ImageTransform.Matrix = matrix;
+        TransformChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     // Zoom anchored on the cursor (spec §5): scale about the pointer's position in this control's
     // coordinate space, so whatever detail is under the cursor stays under the cursor as you zoom,
@@ -67,7 +102,7 @@ public partial class SingleImageView : UserControl
         {
             var origin = e.GetPosition(this);
             matrix.ScaleAt(factor, factor, origin.X, origin.Y);
-            ImageTransform.Matrix = matrix;
+            SetTransform(matrix);
         }
 
         e.Handled = true;
@@ -77,7 +112,10 @@ public partial class SingleImageView : UserControl
     {
         if (e.ClickCount == 2)
         {
-            MaximiseToggleRequested?.Invoke(this, EventArgs.Empty);
+            if (AllowWindowGestures)
+            {
+                MaximiseToggleRequested?.Invoke(this, EventArgs.Empty);
+            }
             e.Handled = true;
             return;
         }
@@ -87,7 +125,10 @@ public partial class SingleImageView : UserControl
             // Not zoomed, so there's nothing to pan — drag the window instead. Must be raised
             // synchronously from the mouse-down: Window.DragMove() requires the button to still
             // be physically down when it's called.
-            WindowDragRequested?.Invoke(this, EventArgs.Empty);
+            if (AllowWindowGestures)
+            {
+                WindowDragRequested?.Invoke(this, EventArgs.Empty);
+            }
             return;
         }
 
@@ -102,7 +143,7 @@ public partial class SingleImageView : UserControl
         var current = e.GetPosition(this);
         var matrix = ImageTransform.Matrix;
         matrix.Translate(current.X - _dragStart.X, current.Y - _dragStart.Y);
-        ImageTransform.Matrix = matrix;
+        SetTransform(matrix);
         _dragStart = current;
     }
 

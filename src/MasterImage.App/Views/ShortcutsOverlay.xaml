@@ -2,11 +2,17 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Border Background="#DD000000">
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="520">
+        <!-- Scrolls rather than clips. The panel is centred, so on a window too short to hold it
+             the list silently loses lines off BOTH ends — and the ones that go first are the
+             bottom of "Other", which is where the Esc-to-quit line lives. Nothing else documents
+             that gesture, so it's the last thing that can afford to be invisible. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="520" Margin="0,16">
             <TextBlock Text="Shortcuts" FontSize="20" FontWeight="Bold" Foreground="White" Margin="0,0,0,12" />
 
             <TextBlock Text="Viewing" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,4,0,4" />
             <TextBlock Foreground="White" Text="Left / Right — previous / next photo" Margin="0,2" />
+            <TextBlock Foreground="White" Text="Up / Down — the same as Left / Right" Margin="0,2" />
             <TextBlock Foreground="White" Text="Scroll — zoom in/out at the cursor" Margin="0,2" />
             <TextBlock Foreground="White" Text="Drag (zoomed in) — pan around the photo" Margin="0,2" />
             <TextBlock Foreground="White" Text="Drag (not zoomed) — move the window" Margin="0,2" />
@@ -20,6 +26,11 @@
             <TextBlock Foreground="White" Text="1 / 2 — smaller / bigger tiles      3 — default size" Margin="0,2" />
             <TextBlock Foreground="White" Text="Shift + scroll — resize tiles smoothly" Margin="0,2" />
 
+            <TextBlock Text="Compare" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
+            <TextBlock Foreground="White" Text="J — two photos side by side, on / off" Margin="0,2" />
+            <TextBlock Foreground="White" Text="K — switch which pane the arrows drive" Margin="0,2" />
+            <TextBlock Foreground="White" Text="H — zoom both panes together / separately" Margin="0,2" />
+
             <TextBlock Text="Culling" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
             <TextBlock Foreground="White" Text="M — mark / unmark (the selected tile, in grid)" Margin="0,2" />
             <TextBlock Foreground="White" Text="N — move marked photos into selected/" Margin="0,2" />
@@ -28,8 +39,9 @@
             <TextBlock Text="Other" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
             <TextBlock Foreground="White" Text="I — toggle this panel" Margin="0,2" />
             <TextBlock Foreground="White" Text="U — check for updates" Margin="0,2" />
-            <TextBlock Foreground="White" Text="Esc — close panel / close grid / exit fullscreen" Margin="0,2" />
-            <TextBlock Foreground="#CCCCCC" Text="Alt+F4 — close Master Image" Margin="0,2" />
-        </StackPanel>
+            <TextBlock Foreground="White" Text="Esc — exit fullscreen / compare" Margin="0,2" />
+            <TextBlock Foreground="#CCCCCC" Text="Esc ×3 quickly, or Alt+F4 — close Master Image" Margin="0,2" />
+            </StackPanel>
+        </ScrollViewer>
     </Border>
 </UserControl>

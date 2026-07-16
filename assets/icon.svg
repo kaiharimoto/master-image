@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Master Image</title>
+  <desc>Two white triangles forming an M: a large near peak and a smaller far peak, on black.</desc>
+
+  <rect width="256" height="256" rx="48" ry="48" fill="#000000"/>
+
+  <!-- The near peak. -->
+  <path d="M98,44 L186,212 L16,212 Z" fill="#ffffff"/>
+
+  <!-- The far peak. It overlaps the near one by roughly a third of its base, which is what makes
+       the pair read as one M: the two edges cross well below both apexes, cutting a real valley
+       between them. Pull them apart and the silhouette becomes two separate mountains instead.
+       The black stroke cuts a seam along the crossing so they still read as two triangles rather
+       than one blob; against the black background the rest of the stroke is invisible. -->
+  <path d="M178,104 L240,212 L114,212 Z"
+        fill="#ffffff" stroke="#000000" stroke-width="12" stroke-linejoin="round"/>
+</svg>

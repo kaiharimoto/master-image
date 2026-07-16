@@ -26,6 +26,9 @@
         <ContentControl x:Name="SingleImageHost">
             <local:SingleImageView x:Name="SingleImageViewControl" />
         </ContentControl>
+        <ContentControl x:Name="CompareHost" Visibility="Collapsed">
+            <local:CompareView x:Name="CompareViewControl" />
+        </ContentControl>
         <ContentControl x:Name="GridHost" Visibility="Collapsed">
             <local:TileGridView x:Name="TileGridViewControl" />
         </ContentControl>

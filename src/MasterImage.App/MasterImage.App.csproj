@@ -29,6 +29,11 @@
     <AssemblyTitle>Master Image</AssemblyTitle>
     <Product>Master Image</Product>
 
+    <!-- Embeds the icon in the exe, which is where Explorer, the taskbar, Alt+Tab and the
+         DefaultIcon file-association registration all read it from. Regenerate it from
+         assets/icon.svg with scripts/generate-icon.ps1. -->
+    <ApplicationIcon>appicon.ico</ApplicationIcon>
+
     <!-- Pairs with the ApplicationDefinition removal below: App supplies its own Main. -->
     <StartupObject>MasterImage.App.App</StartupObject>
   </PropertyGroup>
