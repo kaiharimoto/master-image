@@ -30,6 +30,11 @@ public partial class CompareView : UserControl
         LeftPane.TransformChanged += (_, _) => Mirror(LeftPane, RightPane);
         RightPane.TransformChanged += (_, _) => Mirror(RightPane, LeftPane);
 
+        foreach (var pane in new[] { LeftPane, RightPane })
+        {
+            pane.VideoFailed += (_, message) => VideoFailed?.Invoke(this, message);
+        }
+
         SetActivePane(ComparePane.Right);
     }
 
@@ -38,10 +43,44 @@ public partial class CompareView : UserControl
     // exception, so it's the toggle rather than the default.
     public bool IsZoomLocked { get; private set; } = true;
 
+    // Raised when a pane can't play a clip, so MainWindow can say so in the overlay.
+    public event EventHandler<string>? VideoFailed;
+
     public void SetPaneImage(ComparePane pane, BitmapSource? image) =>
         // resetZoom: false — seeking a pane must not throw away the framing you set up, or
         // comparing a run of candidates against a fixed reference would mean re-zooming every time.
         PaneFor(pane).SetImage(image, resetZoom: false);
+
+    // Both panes start muted (see SetActivePane's caller): two clips talking over each other is
+    // never what anyone wants, so the default is silence and A picks a side.
+    public void SetPaneVideo(ComparePane pane, string filePath) =>
+        PaneFor(pane).SetVideo(filePath, muted: PaneFor(pane).IsMuted, resetZoom: false);
+
+    // Toggles mute on one pane only — the "individually" part of comparing two clips. Returns the
+    // new state so the caller can report it.
+    public bool ToggleMute(ComparePane pane)
+    {
+        var target = PaneFor(pane);
+        target.IsMuted = !target.IsMuted;
+        return target.IsMuted;
+    }
+
+    public bool IsPaneMuted(ComparePane pane) => PaneFor(pane).IsMuted;
+
+    public bool IsPaneShowingVideo(ComparePane pane) => PaneFor(pane).IsShowingVideo;
+
+    // Closes both panes' files, so a cull can move a clip that's currently playing.
+    public void ReleaseVideo()
+    {
+        LeftPane.ReleaseVideo();
+        RightPane.ReleaseVideo();
+    }
+
+    public void MuteAllPanes()
+    {
+        LeftPane.IsMuted = true;
+        RightPane.IsMuted = true;
+    }
 
     public void SetActivePane(ComparePane pane)
     {

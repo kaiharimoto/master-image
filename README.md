@@ -6,6 +6,9 @@ quickly: seek instantly, compare in a tile grid, mark the keepers, and move them
 Opens JPEG, PNG, GIF, BMP, WebP, TIFF, and camera RAW — Sony ARW, Nikon NEF, Canon CR2/CR3, Adobe
 DNG, Fuji RAF, Olympus ORF, Panasonic RW2 and ~30 more.
 
+Plays video too — MP4, MOV, AVI, MKV, WebM, AVCHD (MTS/M2TS) and more — so the clips in a shoot sit
+in the same pass as the stills.
+
 ## Install
 
 Download `Setup.exe` from the [latest release](https://github.com/kaiharimoto/master-image/releases) and
@@ -32,9 +35,11 @@ been allowed to seize defaults silently since Windows 8.
 | Arrows (in grid) | Browse tiles |
 | `Enter` / click | Open the selected tile |
 | `1` / `2` / `3` | Smaller / bigger / default tile size |
+| `P` | Peek at the previous / next photo |
 | `J` | Compare two photos side by side |
 | `K` | Switch which pane the arrows drive |
 | `H` | Zoom both panes together / separately |
+| `A` | Mute / unmute video |
 | `M` | Mark / unmark |
 | `N` | Move marked photos into `selected/` |
 | `L` | Preload the folder for instant seeking |
@@ -52,6 +57,18 @@ and flip through candidates on the other.
 `H` toggles zoom lock. Locked (the default), zooming or paning either pane does the same to the
 other — which is the point when you're checking two frames of the same shot for focus. Panes keep
 their zoom as you seek, so you can zoom to 100% once and then browse.
+
+## Video
+
+Videos autoplay on a loop, with sound. `A` mutes, and the choice sticks for the rest of the session
+— so seeking through a folder of clips doesn't mean muting each one.
+
+In compare mode both panes start muted, because two clips talking over each other is never useful.
+`A` then unmutes whichever pane is active, so you choose what you're listening to.
+
+Playback uses whatever codecs Windows has. If a clip won't play it's usually HEVC, which needs the
+free **HEVC Video Extensions** from the Microsoft Store — the app says so rather than showing a
+black frame.
 
 ## Why it's fast
 

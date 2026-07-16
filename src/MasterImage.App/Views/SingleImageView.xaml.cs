@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -6,6 +7,10 @@ using System.Windows.Media.Imaging;
 
 namespace MasterImage.App.Views;
 
+// Shows one media item — a photo or a video — with zoom and pan.
+//
+// Video lives here rather than in a control of its own because compare mode is two of these: putting
+// it here means compare gets video, per-pane zoom and per-pane audio for free.
 public partial class SingleImageView : UserControl
 {
     private const double MinScale = 1.0;
@@ -25,10 +30,15 @@ public partial class SingleImageView : UserControl
     // Raised whenever zoom or pan changes, so compare mode can mirror one pane onto the other.
     public event EventHandler? TransformChanged;
 
+    // Raised when Media Foundation can't play a file — usually a codec this machine lacks.
+    public event EventHandler<string>? VideoFailed;
+
     // False for compare-mode panes. Dragging one half of a split to move the whole window (or
     // double-clicking it to maximise) makes the two panes feel like separate windows rather than
     // one view — and unlike single-image view, a pane has no title bar to miss.
     public bool AllowWindowGestures { get; set; } = true;
+
+    public bool IsShowingVideo { get; private set; }
 
     // The pane's zoom/pan, as a matrix in the pane's own coordinate space. Assigning it is how
     // compare mode mirrors one pane onto the other while zoom is locked; because both panes are
@@ -47,6 +57,9 @@ public partial class SingleImageView : UserControl
         MouseLeftButtonDown += OnMouseLeftButtonDown;
         MouseMove += OnMouseMove;
         MouseLeftButtonUp += OnMouseLeftButtonUp;
+
+        PhotoVideo.MediaEnded += (_, _) => Loop();
+        PhotoVideo.MediaFailed += (_, e) => OnVideoFailed(e);
     }
 
     // resetZoom: false keeps the current framing across a photo swap. Compare mode wants that —
@@ -54,11 +67,70 @@ public partial class SingleImageView : UserControl
     // the whole point of the split, and re-zooming after every seek would defeat it.
     public void SetImage(BitmapSource? image, bool resetZoom = true)
     {
+        ReleaseVideo();
+
         PhotoImage.Source = image;
+        PhotoImage.Visibility = Visibility.Visible;
+        PhotoVideo.Visibility = Visibility.Collapsed;
+        IsShowingVideo = false;
+
         if (resetZoom)
         {
             ResetZoom();
         }
+    }
+
+    public void SetVideo(string filePath, bool muted, bool resetZoom = true)
+    {
+        PhotoImage.Source = null;
+        PhotoImage.Visibility = Visibility.Collapsed;
+        PhotoVideo.Visibility = Visibility.Visible;
+        IsShowingVideo = true;
+
+        PhotoVideo.IsMuted = muted;
+        PhotoVideo.Source = new Uri(filePath);
+        PhotoVideo.Play();
+
+        if (resetZoom)
+        {
+            ResetZoom();
+        }
+    }
+
+    public bool IsMuted
+    {
+        get => PhotoVideo.IsMuted;
+        set => PhotoVideo.IsMuted = value;
+    }
+
+    // Closes the file. Essential before a cull: a playing MediaElement holds its source open, so
+    // moving the clip currently on screen would fail as a sharing violation — and CullOperations
+    // reports failures rather than throwing, so it'd surface as a bare "1 failed" with no clue why.
+    public void ReleaseVideo()
+    {
+        if (PhotoVideo.Source is null) return;
+
+        PhotoVideo.Stop();
+        PhotoVideo.Close();
+        PhotoVideo.Source = null;
+        IsShowingVideo = false;
+    }
+
+    private void Loop()
+    {
+        PhotoVideo.Position = TimeSpan.Zero;
+        PhotoVideo.Play();
+    }
+
+    private void OnVideoFailed(ExceptionRoutedEventArgs e)
+    {
+        string name = PhotoVideo.Source is null ? "this clip" : Path.GetFileName(PhotoVideo.Source.LocalPath);
+        ReleaseVideo();
+
+        // Same bargain as RAW: we play whatever codecs Windows has, so the one failure with a fix
+        // the user can act on is a missing one — name it rather than leaving a black rectangle.
+        VideoFailed?.Invoke(this, $"Can't play {name} — this may need a codec Windows doesn't have " +
+                                  $"(HEVC video needs the free \"HEVC Video Extensions\" from the Microsoft Store).");
     }
 
     public void ResetZoom() => SetTransform(Matrix.Identity);
@@ -71,6 +143,11 @@ public partial class SingleImageView : UserControl
         if (ImageTransform.Matrix == matrix) return;
 
         ImageTransform.Matrix = matrix;
+
+        // The video carries its own transform object — one MatrixTransform instance can't be the
+        // RenderTransform of two elements — so it's kept in step here rather than by sharing.
+        VideoTransform.Matrix = matrix;
+
         TransformChanged?.Invoke(this, EventArgs.Empty);
     }
 

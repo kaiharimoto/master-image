@@ -43,6 +43,12 @@ public partial class MainWindow : Window
 
     private readonly EscapeQuitCounter _escapeCounter = new();
 
+    // Session-wide mute for the single-image view, deliberately sticky: a video plays with sound by
+    // default, but seeking through twenty clips and re-muting each one would be hostile, so muting
+    // once stays muted. Compare mode keeps its own per-pane flags instead — a mute set while
+    // comparing shouldn't silently change what happens back in single view.
+    private bool _isVideoMuted;
+
     // Set once an update has been found and announced, so the second U installs rather than
     // re-checking. Deliberate: a stray U mid-cull must not be able to restart the app.
     private bool _updateOffered;
@@ -64,6 +70,8 @@ public partial class MainWindow : Window
         TileGridViewControl.TileClicked += OnTileClicked;
         SingleImageViewControl.WindowDragRequested += OnWindowDragRequested;
         SingleImageViewControl.MaximiseToggleRequested += OnMaximiseToggleRequested;
+        SingleImageViewControl.VideoFailed += (_, message) => NavigationOverlayControl.ShowMessage(message);
+        CompareViewControl.VideoFailed += (_, message) => NavigationOverlayControl.ShowMessage(message);
     }
 
     private static (string Folder, string? File) ResolveFolderAndFile(string? requestedPath)
@@ -108,6 +116,17 @@ public partial class MainWindow : Window
         }
 
         int generation = ++_loadGeneration;
+
+        // Video doesn't go through the decode cache — MediaElement opens the file itself. Handled
+        // before the decode so a clip never waits on a cache that would only hand back null.
+        if (VideoFormats.IsVideo(photo.PrimaryFilePath))
+        {
+            SingleImageViewControl.SetVideo(photo.PrimaryFilePath, _isVideoMuted);
+            NavigationOverlayControl.Show(photo, ViewModel.CurrentIndex, ViewModel.Photos.Count, ViewModel.IsCurrentMarked);
+            PrefetchNeighbours();
+            _ = RefreshPeekAsync(generation);
+            return;
+        }
 
         var decode = _imageCache.GetAsync(photo);
 
@@ -253,6 +272,10 @@ public partial class MainWindow : Window
         CompareViewControl.SetActivePane(_compareState.ActivePane);
         PeekOverlayControl.Clear();
 
+        // Two clips talking over each other is never what anyone wants, so compare starts silent
+        // and A picks a side. Independent of the single-view preference on purpose.
+        CompareViewControl.MuteAllPanes();
+
         // Both panes open at fit-to-window regardless of how the single view was zoomed — the
         // split halves the width, so the previous framing would be wrong for both panes anyway.
         CompareViewControl.ResetZoom();
@@ -291,6 +314,31 @@ public partial class MainWindow : Window
         ShowCompareOverlay();
     }
 
+    // A means "mute what I'm listening to". In compare that's the active pane and only the active
+    // pane — the point of comparing two clips is choosing which one you hear.
+    private void ToggleAudio()
+    {
+        if (_compareState is not null)
+        {
+            if (!CompareViewControl.IsPaneShowingVideo(_compareState.ActivePane))
+            {
+                NavigationOverlayControl.ShowMessage("No video in the active pane.");
+                return;
+            }
+
+            bool paneMuted = CompareViewControl.ToggleMute(_compareState.ActivePane);
+            string side = _compareState.ActivePane == ComparePane.Left ? "Left" : "Right";
+            NavigationOverlayControl.ShowMessage(paneMuted ? $"{side} pane muted" : $"{side} pane unmuted");
+            return;
+        }
+
+        // Flips the session preference even when a photo is on screen: it's a standing choice about
+        // clips, so you can set it before you reach one rather than only while one is playing.
+        _isVideoMuted = !_isVideoMuted;
+        SingleImageViewControl.IsMuted = _isVideoMuted;
+        NavigationOverlayControl.ShowMessage(_isVideoMuted ? "Video muted" : "Video unmuted");
+    }
+
     private void ToggleZoomLock()
     {
         if (_compareState is null) return;
@@ -321,6 +369,12 @@ public partial class MainWindow : Window
         foreach (var pane in panes)
         {
             var photo = photos[pane == ComparePane.Left ? _compareState.LeftIndex : _compareState.RightIndex];
+
+            if (VideoFormats.IsVideo(photo.PrimaryFilePath))
+            {
+                CompareViewControl.SetPaneVideo(pane, photo.PrimaryFilePath);
+                continue;
+            }
 
             var decode = _imageCache.GetAsync(photo);
             var image = decode.IsCompletedSuccessfully ? decode.Result : await decode;
@@ -387,6 +441,12 @@ public partial class MainWindow : Window
 
     private async Task HandleCullMoveAsync()
     {
+        // A playing MediaElement holds its source file open, so moving the clip currently on screen
+        // would fail as a sharing violation — and CullOperations reports failures rather than
+        // throwing, so it'd surface as a bare "1 failed" with nothing to explain it. Let go first.
+        SingleImageViewControl.ReleaseVideo();
+        CompareViewControl.ReleaseVideo();
+
         var result = ViewModel.MoveMarkedToSelected();
         RefreshGridItems(); // Photos was just reassigned — the grid's ItemsSource would otherwise
                             // still list the photos that just moved into selected/.
@@ -528,6 +588,11 @@ public partial class MainWindow : Window
 
             case Key.H:
                 ToggleZoomLock();
+                e.Handled = true;
+                break;
+
+            case Key.A:
+                ToggleAudio();
                 e.Handled = true;
                 break;
 

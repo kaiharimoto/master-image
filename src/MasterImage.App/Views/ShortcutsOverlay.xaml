@@ -27,10 +27,15 @@
             <TextBlock Foreground="White" Text="1 / 2 — smaller / bigger tiles      3 — default size" Margin="0,2" />
             <TextBlock Foreground="White" Text="Shift + scroll — resize tiles smoothly" Margin="0,2" />
 
+            <TextBlock Text="Video" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
+            <TextBlock Foreground="White" Text="Videos play automatically, on a loop" Margin="0,2" />
+            <TextBlock Foreground="White" Text="A — mute / unmute (stays set for the session)" Margin="0,2" />
+
             <TextBlock Text="Compare" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
             <TextBlock Foreground="White" Text="J — two photos side by side, on / off" Margin="0,2" />
             <TextBlock Foreground="White" Text="K — switch which pane the arrows drive" Margin="0,2" />
             <TextBlock Foreground="White" Text="H — zoom both panes together / separately" Margin="0,2" />
+            <TextBlock Foreground="White" Text="A — mute / unmute the active pane only" Margin="0,2" />
 
             <TextBlock Text="Culling" Foreground="#8AB4F8" FontWeight="Bold" Margin="0,10,0,4" />
             <TextBlock Foreground="White" Text="M — mark / unmark (the selected tile, in grid)" Margin="0,2" />

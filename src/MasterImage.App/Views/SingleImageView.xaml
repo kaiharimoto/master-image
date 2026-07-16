@@ -2,10 +2,21 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid ClipToBounds="True" Background="Transparent">
+        <!-- Exactly one of these is ever visible. They share a single MatrixTransform so wheel-zoom,
+             drag-pan and compare mode's zoom mirroring work on a clip with no code of their own. -->
         <Image x:Name="PhotoImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality">
             <Image.RenderTransform>
                 <MatrixTransform x:Name="ImageTransform" />
             </Image.RenderTransform>
         </Image>
+
+        <!-- Manual so playback is ours to drive: autoplay, and loop by rewinding on MediaEnded.
+             ScrubbingEnabled makes the first frame appear on load rather than a black rectangle. -->
+        <MediaElement x:Name="PhotoVideo" Stretch="Uniform" Visibility="Collapsed"
+                      LoadedBehavior="Manual" UnloadedBehavior="Manual" ScrubbingEnabled="True">
+            <MediaElement.RenderTransform>
+                <MatrixTransform x:Name="VideoTransform" />
+            </MediaElement.RenderTransform>
+        </MediaElement>
     </Grid>
 </UserControl>

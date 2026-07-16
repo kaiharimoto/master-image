@@ -56,7 +56,13 @@ public sealed class ThumbnailCache
             // IsUpToDate stays true and would never otherwise self-heal.
         }
 
-        var decoded = ImageLoader.TryLoadAtSize(sourcePath, targetPixelWidth);
+        // The one media-specific step in this class. Everything after it — the JPEG on disk, the
+        // manifest, PruneOrphans — is keyed by filename and doesn't care what the source was, which
+        // is why the grid, the P peek and L all handle video with no changes of their own.
+        var decoded = VideoFormats.IsVideo(sourcePath)
+            ? VideoThumbnail.TryExtract(sourcePath, targetPixelWidth)
+            : ImageLoader.TryLoadAtSize(sourcePath, targetPixelWidth);
+
         if (decoded is null)
         {
             return null;

@@ -58,6 +58,16 @@ public sealed class PhotoImageCache
     {
         string key = item.PrimaryFilePath;
 
+        // Video never enters this cache. It isn't a BitmapSource and never will be — MediaElement
+        // opens the file itself when it's displayed, so there is nothing here to warm. Bailing
+        // before the dictionary matters more than it looks: Prefetch queues 20 items ahead, and
+        // handing multi-gigabyte clips to WIC would burn every decode slot on work guaranteed to
+        // return null, stalling real photo read-ahead behind it.
+        if (VideoFormats.IsVideo(key))
+        {
+            return Task.FromResult<BitmapSource?>(null);
+        }
+
         lock (_lock)
         {
             if (_entries.TryGetValue(key, out var existing))

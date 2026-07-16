@@ -32,7 +32,9 @@ public static class PhotoSet
     }
 
     private static bool IsSupported(string path) =>
-        StandardExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()) || RawFormats.IsRaw(path);
+        StandardExtensions.Contains(Path.GetExtension(path).ToLowerInvariant())
+        || RawFormats.IsRaw(path)
+        || VideoFormats.IsVideo(path);
 
     // A camera shooting RAW+JPEG writes two files for one press of the shutter (DSC1.ARW and
     // DSC1.jpg). That's one photo, so it becomes a single PhotoItem holding both paths: one tile,
@@ -43,19 +45,28 @@ public static class PhotoSet
     // Pairing is specifically a RAW-and-its-sidecars relationship, not "shares a stem". Files
     // grouped without any RAW among them (sunset.jpg and sunset.png) are unrelated pictures that
     // happen to share a name, and each stays its own photo.
+    //
+    // Video never pairs, even with a same-stem still: DSC1.MP4 next to DSC1.JPG is a clip and a
+    // still, not two renderings of one shutter press. Pairing them would hide one behind the other
+    // and move both on a cull.
     private static IEnumerable<PhotoItem> BuildItems(IGrouping<string, string> group)
     {
         var paths = group.ToList();
-        var raw = paths.Where(RawFormats.IsRaw).ToList();
+        var videos = paths.Where(VideoFormats.IsVideo).ToList();
+        var stills = paths.Where(p => !VideoFormats.IsVideo(p)).ToList();
+        var raw = stills.Where(RawFormats.IsRaw).ToList();
+
+        var items = videos.Select(path => new PhotoItem(group.Key, new[] { path })).ToList();
 
         if (raw.Count == 0)
         {
-            return paths.Select(path => new PhotoItem(group.Key, new[] { path }));
+            items.AddRange(stills.Select(path => new PhotoItem(group.Key, new[] { path })));
+        }
+        else
+        {
+            items.Add(new PhotoItem(group.Key, raw.Concat(stills.Where(p => !RawFormats.IsRaw(p))).ToList()));
         }
 
-        return new[]
-        {
-            new PhotoItem(group.Key, raw.Concat(paths.Where(p => !RawFormats.IsRaw(p))).ToList())
-        };
+        return items;
     }
 }
