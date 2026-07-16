@@ -11,7 +11,11 @@ namespace MasterImage.App;
 // out when you ask.
 public sealed class AppUpdater
 {
-    private const string RepositoryUrl = "https://github.com/KAIHARI/master-image";
+    // The GitHub *account*, which is not the same as the git user.name ("KAIHARI") this project is
+    // committed under. An earlier build shipped with KAIHARI here — an account that doesn't exist —
+    // so every update check it made 404'd. Anything already installed with that URL baked in can
+    // only be fixed by reinstalling; there's no way to update your way out of a bad update URL.
+    private const string RepositoryUrl = "https://github.com/kaiharimoto/master-image";
 
     private readonly UpdateManager _manager = new(new GithubSource(RepositoryUrl, accessToken: null, prerelease: false));
     private UpdateInfo? _pending;

@@ -8,7 +8,7 @@ DNG, Fuji RAF, Olympus ORF, Panasonic RW2 and ~30 more.
 
 ## Install
 
-Download `Setup.exe` from the [latest release](https://github.com/KAIHARI/master-image/releases) and
+Download `Setup.exe` from the [latest release](https://github.com/kaiharimoto/master-image/releases) and
 run it. It installs per-user, so no admin rights are needed.
 
 **Windows will show a "Windows protected your PC" warning.** The app isn't code-signed (certificates
