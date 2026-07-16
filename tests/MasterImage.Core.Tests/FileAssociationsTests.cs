@@ -99,25 +99,50 @@ public class FileAssociationsTests : IDisposable
         Assert.Contains("MasterImage", registered!.GetValueNames());
     }
 
+    // These two guard a bug this code actually had: RegisteredApplications was written to the real
+    // hive regardless of the scratch location, so running the suite rewrote the developer's live
+    // Default-apps entry — and it only ever *looked* clean because whichever test called Unregister
+    // happened to run last.
+    //
+    // They compare before/after rather than asserting the real hive is empty. Once Master Image is
+    // actually installed on a machine, those keys legitimately exist and hold real values; asserting
+    // their absence would fail for a completely correct reason, on every user who installed the app.
+    // What must hold is that a scratch-scoped Register leaves real state untouched.
+
     [Fact]
     public void RegisteringDoesNotTouchTheRealRegisteredApplicationsKey()
     {
-        // Guards a bug this code actually had: RegisteredApplications was written to the real hive
-        // regardless of the scratch location, so running the tests rewrote the developer's live
-        // Default-apps entry — and it only ever *looked* clean because whichever test called
-        // Unregister happened to run last.
+        string? before = ReadRealRegisteredApplicationsEntry();
+
         FileAssociations.Register(@"C:\Fake\MasterImage.exe", _scratch);
 
-        using var real = Registry.CurrentUser.OpenSubKey(@"Software\RegisteredApplications");
-        Assert.DoesNotContain("MasterImage", real?.GetValueNames() ?? Array.Empty<string>());
+        Assert.Equal(before, ReadRealRegisteredApplicationsEntry());
     }
 
     [Fact]
     public void RegisteringDoesNotTouchTheRealClassesHive()
     {
+        string? before = ReadRealProgIdCommand();
+
         FileAssociations.Register(@"C:\Fake\MasterImage.exe", _scratch);
 
-        Assert.Null(Registry.CurrentUser.OpenSubKey(@"Software\Classes\MasterImage.Photo"));
+        Assert.Equal(before, ReadRealProgIdCommand());
+
+        // Belt and braces: the fake path this test registers must never reach the real hive, whether
+        // or not the app is installed.
+        Assert.DoesNotContain(@"C:\Fake\MasterImage.exe", ReadRealProgIdCommand() ?? string.Empty);
+    }
+
+    private static string? ReadRealRegisteredApplicationsEntry()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\RegisteredApplications");
+        return key?.GetValue("MasterImage") as string;
+    }
+
+    private static string? ReadRealProgIdCommand()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey($@"Software\Classes\{FileAssociations.ProgId}\shell\open\command");
+        return key?.GetValue(null) as string;
     }
 
     [Fact]
