@@ -33,12 +33,17 @@ public partial class App : Application
         app.Run();
     }
 
-    // The path file associations must point at: %LocalAppData%\MasterImage\MasterImage.exe, the
-    // stub Velopack keeps at the root of the install which forwards to whatever is in current\.
+    // The path file associations must point at: the execution stub Velopack keeps beside current\,
+    // which forwards to whatever version is installed.
     //
     // This must never be the running exe's own path. Velopack replaces the entire current\ folder on
-    // every update, so an association pointing there would break the first time the app updated
-    // itself. Falls back to this exe for dev builds, where no stub exists.
+    // every update, so an association pointing in there would break the first time the app updated
+    // itself — silently, and only for people who'd already installed.
+    //
+    // The stub is named after --mainExe, so it has the SAME filename as this assembly and sits one
+    // directory up. That's derived from the running exe rather than hard-coded: an earlier version
+    // guessed at "MasterImage.exe", found nothing, and quietly fell back to the current\ path —
+    // producing exactly the breakage this method exists to avoid.
     private static string StubExePath()
     {
         string self = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "MasterImage.App.exe");
@@ -46,13 +51,14 @@ public partial class App : Application
 
         if (installDir.Name.Equals("current", StringComparison.OrdinalIgnoreCase) && installDir.Parent is not null)
         {
-            string stub = Path.Combine(installDir.Parent.FullName, "MasterImage.exe");
+            string stub = Path.Combine(installDir.Parent.FullName, Path.GetFileName(self));
             if (File.Exists(stub))
             {
                 return stub;
             }
         }
 
+        // Dev build: no stub exists, so the running exe is the only sensible answer.
         return self;
     }
 
